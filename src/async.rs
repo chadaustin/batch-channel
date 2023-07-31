@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
@@ -12,6 +13,14 @@ struct State<T> {
     tx_count: usize,
     rx_count: usize,
     rx_wakers: Vec<Waker>,
+}
+
+fn wake_all<T>(mut state: MutexGuard<State<T>>) {
+    let wakers = std::mem::take(&mut state.rx_wakers);
+    drop(state);
+    for waker in wakers {
+        waker.wake();
+    }
 }
 
 pub struct Sender<T> {
@@ -33,9 +42,7 @@ impl<T> Drop for Sender<T> {
         assert!(state.tx_count >= 1);
         state.tx_count -= 1;
         if state.tx_count == 0 {
-            for waker in std::mem::take(&mut state.rx_wakers) {
-                waker.wake();
-            }
+            wake_all(state);
         }
     }
 }
@@ -60,13 +67,11 @@ impl<T> Sender<T> {
         }
 
         state.queue.push_back(value);
-        // TODO: How many do we actually need to wake up?
-        let waker = state.rx_wakers.pop();
-        drop(state);
 
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        wake_all(state);
 
         Ok(())
     }
@@ -82,13 +87,11 @@ impl<T> Sender<T> {
         }
 
         state.queue.extend(values.drain(..));
-        // TODO: How many do we actually need to wake up? One per added value?
-        let wakers = std::mem::take(&mut state.rx_wakers);
-        drop(state);
 
-        for waker in wakers {
-            waker.wake();
-        }
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        wake_all(state);
 
         Ok(values)
     }
