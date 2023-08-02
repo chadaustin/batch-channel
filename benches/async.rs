@@ -82,7 +82,9 @@ impl<T: Send + Sync + 'static> UnboundedChannel<T> for FuturesChannel {
     }
 }
 
-fn single_threaded_one_item_tx_first<UC: UnboundedChannel<usize>>(iteration_count: usize) -> Duration {
+fn single_threaded_one_item_tx_first<UC: UnboundedChannel<usize>>(
+    iteration_count: usize,
+) -> Duration {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
@@ -108,7 +110,9 @@ fn single_threaded_one_item_tx_first<UC: UnboundedChannel<usize>>(iteration_coun
     instant.elapsed()
 }
 
-fn single_threaded_one_item_rx_first<UC: UnboundedChannel<usize>>(iteration_count: usize) -> Duration {
+fn single_threaded_one_item_rx_first<UC: UnboundedChannel<usize>>(
+    iteration_count: usize,
+) -> Duration {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 

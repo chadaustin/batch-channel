@@ -59,8 +59,7 @@ impl<T> fmt::Display for SendError<T> {
     }
 }
 
-impl<T: fmt::Debug> std::error::Error for SendError<T> {
-}
+impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
 impl<T> Sender<T> {
     pub fn batch(self, capacity: usize) -> BatchSender<T> {
