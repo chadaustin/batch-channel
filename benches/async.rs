@@ -14,15 +14,21 @@ trait UnboundedChannelName {
 }
 
 #[async_trait]
-trait UnboundedChannel<T: Send + Sync + 'static>: UnboundedChannelName {
-    type Sender: Send + 'static;
-    type Receiver: Send + 'static;
+trait UnboundedChannel: UnboundedChannelName {
+    type Sender<T: Send + 'static>: Send + 'static;
+    type Receiver<T: Send + 'static>: Send + 'static;
 
-    fn new() -> (Self::Sender, Self::Receiver);
-    fn send(tx: &Self::Sender, value: T) -> anyhow::Result<()>;
-    async fn recv(rx: &mut Self::Receiver) -> Option<T>;
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>);
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()>;
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T>;
 
-    fn send_many<I: Into<Vec<T>>>(tx: &Self::Sender, values: I) -> anyhow::Result<Vec<T>> {
+    fn send_many<T: fmt::Debug + Send + Sync, I: Into<Vec<T>>>(
+        tx: &Self::Sender<T>,
+        values: I,
+    ) -> anyhow::Result<Vec<T>> {
         let mut values: Vec<_> = values.into();
         for v in values.drain(..) {
             Self::send(tx, v)?;
@@ -30,7 +36,7 @@ trait UnboundedChannel<T: Send + Sync + 'static>: UnboundedChannelName {
         Ok(values)
     }
 
-    async fn recv_many(rx: &mut Self::Receiver, element_limit: usize) -> Vec<T> {
+    async fn recv_many<T: Send>(rx: &mut Self::Receiver<T>, element_limit: usize) -> Vec<T> {
         let mut v = Vec::with_capacity(element_limit);
         loop {
             match Self::recv(rx).await {
@@ -55,23 +61,32 @@ impl UnboundedChannelName for BatchChannel {
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync + fmt::Debug + 'static> UnboundedChannel<T> for BatchChannel {
-    type Sender = batch_channel::Sender<T>;
-    type Receiver = batch_channel::Receiver<T>;
+impl UnboundedChannel for BatchChannel {
+    type Sender<T: Send + 'static> = batch_channel::Sender<T>;
+    type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
-    fn new() -> (Self::Sender, Self::Receiver) {
+    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
         batch_channel::unbounded()
     }
-    fn send(tx: &Self::Sender, value: T) -> anyhow::Result<()> {
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()> {
         Ok(tx.send(value)?)
     }
-    async fn recv(rx: &mut Self::Receiver) -> Option<T> {
+    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.recv().await
     }
-    fn send_many<I: Into<Vec<T>>>(tx: &Self::Sender, values: I) -> anyhow::Result<Vec<T>> {
+    fn send_many<T: fmt::Debug + Send + Sync + 'static, I: Into<Vec<T>>>(
+        tx: &Self::Sender<T>,
+        values: I,
+    ) -> anyhow::Result<Vec<T>> {
         Ok(tx.send_many(values)?)
     }
-    async fn recv_many(rx: &mut Self::Receiver, element_limit: usize) -> Vec<T> {
+    async fn recv_many<T: Send + 'static>(
+        rx: &mut Self::Receiver<T>,
+        element_limit: usize,
+    ) -> Vec<T> {
         rx.recv_many(element_limit).await
     }
 }
@@ -83,17 +98,20 @@ impl UnboundedChannelName for StdChannel {
 }
 
 #[async_trait]
-impl<T: Send + Sync + 'static> UnboundedChannel<T> for StdChannel {
-    type Sender = std::sync::mpsc::Sender<T>;
-    type Receiver = std::sync::mpsc::Receiver<T>;
+impl UnboundedChannel for StdChannel {
+    type Sender<T: Send + 'static> = std::sync::mpsc::Sender<T>;
+    type Receiver<T: Send + 'static> = std::sync::mpsc::Receiver<T>;
 
-    fn new() -> (Self::Sender, Self::Receiver) {
+    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
         std::sync::mpsc::channel()
     }
-    fn send(tx: &Self::Sender, value: T) -> anyhow::Result<()> {
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()> {
         Ok(tx.send(value)?)
     }
-    async fn recv(rx: &mut Self::Receiver) -> Option<T> {
+    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         loop {
             let r = rx.try_recv();
             match r {
@@ -115,25 +133,29 @@ impl UnboundedChannelName for FuturesChannel {
 }
 
 #[async_trait]
-impl<T: Send + Sync + 'static> UnboundedChannel<T> for FuturesChannel {
-    type Sender = futures::channel::mpsc::UnboundedSender<T>;
-    type Receiver = futures::channel::mpsc::UnboundedReceiver<T>;
+impl UnboundedChannel for FuturesChannel {
+    type Sender<T: Send + 'static> = futures::channel::mpsc::UnboundedSender<T>;
+    type Receiver<T: Send + 'static> = futures::channel::mpsc::UnboundedReceiver<T>;
 
-    fn new() -> (Self::Sender, Self::Receiver) {
+    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
         futures::channel::mpsc::unbounded()
     }
-    fn send(tx: &Self::Sender, value: T) -> anyhow::Result<()> {
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()> {
         Ok(tx.unbounded_send(value)?)
     }
-    async fn recv(rx: &mut Self::Receiver) -> Option<T> {
+    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.next().await
     }
 }
 
-async fn sender<UC>(tx: UC::Sender, iteration_count: usize, batch_size: usize)
-where
-    UC: UnboundedChannel<usize>,
-{
+async fn sender<UC: UnboundedChannel>(
+    tx: UC::Sender<usize>,
+    iteration_count: usize,
+    batch_size: usize,
+) {
     if batch_size == 1 {
         for i in 0..iteration_count {
             UC::send(&tx, i).unwrap();
@@ -157,10 +179,7 @@ where
     }
 }
 
-async fn receiver<UC>(mut rx: UC::Receiver, batch_size: usize)
-where
-    UC: UnboundedChannel<usize> + Send,
-{
+async fn receiver<UC: UnboundedChannel + Send>(mut rx: UC::Receiver<usize>, batch_size: usize) {
     if batch_size == 1 {
         while let Some(_) = UC::recv(&mut rx).await {}
     } else {
@@ -175,7 +194,7 @@ where
 
 fn single_threaded_one_item_tx_first<UC>(iteration_count: usize, batch_size: usize) -> Duration
 where
-    UC: UnboundedChannel<usize> + Send + 'static,
+    UC: UnboundedChannel + Send + 'static,
 {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
@@ -196,7 +215,7 @@ where
 
 fn single_threaded_one_item_rx_first<UC>(iteration_count: usize, batch_size: usize) -> Duration
 where
-    UC: UnboundedChannel<usize> + Send + 'static,
+    UC: UnboundedChannel + Send + 'static,
 {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
@@ -228,7 +247,7 @@ where
 
 fn bench_batch_size<UC>(batch_size: usize)
 where
-    UC: UnboundedChannel<usize> + Send + 'static,
+    UC: UnboundedChannel + Send + 'static,
 {
     bench(
         format!(
