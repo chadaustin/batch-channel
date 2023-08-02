@@ -126,6 +126,41 @@ impl UnboundedChannel for StdChannel {
     }
 }
 
+struct CrossbeamChannel;
+
+impl UnboundedChannelName for CrossbeamChannel {
+    const NAME: &'static str = "crossbeam::channel";
+}
+
+#[async_trait]
+impl UnboundedChannel for CrossbeamChannel {
+    type Sender<T: Send + 'static> = crossbeam::channel::Sender<T>;
+    type Receiver<T: Send + 'static> = crossbeam::channel::Receiver<T>;
+
+    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+        crossbeam::channel::unbounded()
+    }
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()> {
+        Ok(tx.send(value)?)
+    }
+    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+        loop {
+            let r = rx.try_recv();
+            match r {
+                Ok(value) => return Some(value),
+                Err(crossbeam::channel::TryRecvError::Empty) => {
+                    yield_now().await;
+                    continue;
+                }
+                Err(crossbeam::channel::TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+}
+
 struct FuturesChannel;
 
 impl UnboundedChannelName for FuturesChannel {
@@ -271,15 +306,17 @@ where
 
 fn max_name_len() -> usize {
     max(
-        BatchChannel::NAME.len(),
-        max(FuturesChannel::NAME.len(), StdChannel::NAME.len()),
+        max(BatchChannel::NAME.len(), StdChannel::NAME.len()),
+        max(CrossbeamChannel::NAME.len(), FuturesChannel::NAME.len()),
     )
 }
 
 fn main() {
     for batch in [1, 10, 100] {
         bench_batch_size::<BatchChannel>(batch);
-        bench_batch_size::<FuturesChannel>(batch);
         bench_batch_size::<StdChannel>(batch);
+        bench_batch_size::<CrossbeamChannel>(batch);
+        bench_batch_size::<FuturesChannel>(batch);
+        println!();
     }
 }
