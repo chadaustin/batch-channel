@@ -3,13 +3,18 @@ use async_trait::async_trait;
 use futures::executor::LocalPool;
 use futures::task::SpawnExt;
 use futures::StreamExt;
+use std::cmp::max;
 use std::fmt;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 use std::time::Instant;
 
+trait UnboundedChannelName {
+    const NAME: &'static str;
+}
+
 #[async_trait]
-trait UnboundedChannel<T: Send + Sync + 'static> {
+trait UnboundedChannel<T: Send + Sync + 'static>: UnboundedChannelName {
     type Sender: Send + 'static;
     type Receiver: Send + 'static;
 
@@ -45,6 +50,10 @@ trait UnboundedChannel<T: Send + Sync + 'static> {
 
 struct BatchChannel;
 
+impl UnboundedChannelName for BatchChannel {
+    const NAME: &'static str = "batch-channel";
+}
+
 #[async_trait]
 impl<T: Clone + Send + Sync + fmt::Debug + 'static> UnboundedChannel<T> for BatchChannel {
     type Sender = batch_channel::Sender<T>;
@@ -68,6 +77,10 @@ impl<T: Clone + Send + Sync + fmt::Debug + 'static> UnboundedChannel<T> for Batc
 }
 
 struct StdChannel;
+
+impl UnboundedChannelName for StdChannel {
+    const NAME: &'static str = "std::sync::mpsc";
+}
 
 #[async_trait]
 impl<T: Send + Sync + 'static> UnboundedChannel<T> for StdChannel {
@@ -96,6 +109,10 @@ impl<T: Send + Sync + 'static> UnboundedChannel<T> for StdChannel {
 }
 
 struct FuturesChannel;
+
+impl UnboundedChannelName for FuturesChannel {
+    const NAME: &'static str = "futures::channel::mpsc";
+}
 
 #[async_trait]
 impl<T: Send + Sync + 'static> UnboundedChannel<T> for FuturesChannel {
@@ -203,37 +220,47 @@ where
     Name: fmt::Display,
     F: FnOnce(usize) -> Duration,
 {
-    // TODO: disable speedstep
+    // TODO: disable dynamic frequency scaling
     const N: u32 = 100000;
     print!("{name}... ");
     println!("{:?} per", f(N as usize) / N);
 }
 
+fn bench_batch_size<UC>(batch_size: usize)
+where
+    UC: UnboundedChannel<usize> + Send + 'static,
+{
+    bench(
+        format!(
+            "{:width$} tx first 1thr batch={}",
+            UC::NAME,
+            batch_size,
+            width = max_name_len(),
+        ),
+        |ic| single_threaded_one_item_tx_first::<UC>(ic, batch_size),
+    );
+    bench(
+        format!(
+            "{:width$} rx first 1thr batch={}",
+            UC::NAME,
+            batch_size,
+            width = max_name_len(),
+        ),
+        |ic| single_threaded_one_item_rx_first::<UC>(ic, batch_size),
+    );
+}
+
+fn max_name_len() -> usize {
+    max(
+        BatchChannel::NAME.len(),
+        max(FuturesChannel::NAME.len(), StdChannel::NAME.len()),
+    )
+}
+
 fn main() {
-    for batch in &[1, 10, 100] {
-        bench(format!("batch_channel tx first 1thr batch={batch}"), |ic| {
-            single_threaded_one_item_tx_first::<BatchChannel>(ic, *batch)
-        });
-        bench(format!("batch_channel rx first 1thr batch={batch}"), |ic| {
-            single_threaded_one_item_rx_first::<BatchChannel>(ic, *batch)
-        });
-
-        bench(
-            format!("futures::channel::mpsc tx first 1thr batch={batch}"),
-            |ic| single_threaded_one_item_tx_first::<FuturesChannel>(ic, *batch),
-        );
-        bench(
-            format!("futures::channel::mpsc rx first 1thr batch={batch}"),
-            |ic| single_threaded_one_item_rx_first::<FuturesChannel>(ic, *batch),
-        );
-
-        bench(
-            format!("std::sync::mpsc tx first 1thr batch={batch}"),
-            |ic| single_threaded_one_item_tx_first::<StdChannel>(ic, *batch),
-        );
-        bench(
-            format!("std::sync::mpsc rx first 1thr batch={batch}"),
-            |ic| single_threaded_one_item_rx_first::<StdChannel>(ic, *batch),
-        );
+    for batch in [1, 10, 100] {
+        bench_batch_size::<BatchChannel>(batch);
+        bench_batch_size::<FuturesChannel>(batch);
+        bench_batch_size::<StdChannel>(batch);
     }
 }
