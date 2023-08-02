@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,6 +9,8 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
+// TODO: we could replace Arc with Box and rely on atomic tx_count and
+// rx_count.
 struct State<T> {
     queue: VecDeque<T>,
     tx_count: usize,
@@ -49,6 +52,15 @@ impl<T> Drop for Sender<T> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SendError<T>(pub T);
+
+impl<T> fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to send value on channel")
+    }
+}
+
+impl<T: fmt::Debug> std::error::Error for SendError<T> {
+}
 
 impl<T> Sender<T> {
     pub fn batch(self, capacity: usize) -> BatchSender<T> {

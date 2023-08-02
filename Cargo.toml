@@ -8,4 +8,12 @@ edition = "2021"
 [dependencies]
 
 [dev-dependencies]
+anyhow = "1"
+async-std = "1"
+async-trait = "0.1"
 futures = "0.3"
+criterion = "0.5"
+
+[[bench]]
+name = "async"
+harness = false
