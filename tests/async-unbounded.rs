@@ -124,7 +124,7 @@ fn two_reads_from_one_push() {
 }
 
 #[test]
-fn push_batch_wakes_both() {
+fn send_batch_wakes_both() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
@@ -148,6 +148,39 @@ fn push_batch_wakes_both() {
         .unwrap();
 
     pool.run()
+}
+
+#[test]
+fn send_iter_array() {
+    let mut pool = LocalPool::new();
+
+    let (tx, rx) = batch_channel::unbounded();
+    tx.send_iter(["foo", "bar", "baz"]).unwrap();
+    drop(tx);
+
+    pool.run_until(async move {
+        assert_eq!(vec!["foo", "bar", "baz"], rx.recv_batch(4).await);
+    });
+
+    let (tx, rx) = batch_channel::unbounded();
+    drop(rx);
+    assert_eq!(
+        Err(batch_channel::SendError(["foo", "bar", "baz"])),
+        tx.send_iter(["foo", "bar", "baz"])
+    );
+}
+
+#[test]
+fn send_iter_vec() {
+    let mut pool = LocalPool::new();
+
+    let (tx, rx) = batch_channel::unbounded();
+    tx.send_iter(vec!["foo", "bar", "baz"]).unwrap();
+    drop(tx);
+
+    pool.run_until(async move {
+        assert_eq!(vec!["foo", "bar", "baz"], rx.recv_batch(4).await);
+    });
 }
 
 #[test]

@@ -96,6 +96,31 @@ impl<T> Sender<T> {
     /// If all receivers are dropped, the values are returned in
     /// [SendError] untouched. Either the entire batch is sent or none
     /// of it is sent.
+    pub fn send_iter<I>(&self, values: I) -> Result<(), SendError<I>>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut state = self.state.lock().unwrap();
+        if state.rx_count == 0 {
+            assert!(state.queue.is_empty());
+            return Err(SendError(values));
+        }
+
+        state.queue.extend(values.into_iter());
+
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        wake_all(state);
+
+        Ok(())
+    }
+
+    /// Send multiple values.
+    ///
+    /// If all receivers are dropped, the values are returned in
+    /// [SendError] untouched. Either the entire batch is sent or none
+    /// of it is sent.
     pub fn send_batch<I: Into<Vec<T>>>(&self, values: I) -> Result<Vec<T>, SendError<Vec<T>>> {
         // This iterator might be expensive. Evaluate it before the lock is held.
         let mut values: Vec<_> = values.into();
