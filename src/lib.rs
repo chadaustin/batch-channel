@@ -87,7 +87,7 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    pub fn send_many<I: Into<Vec<T>>>(&self, values: I) -> Result<Vec<T>, SendError<Vec<T>>> {
+    pub fn send_batch<I: Into<Vec<T>>>(&self, values: I) -> Result<Vec<T>, SendError<Vec<T>>> {
         // This iterator might be expensive. Evaluate it before the lock is held.
         let mut values: Vec<_> = values.into();
 
@@ -120,7 +120,7 @@ impl<T> Drop for BatchSender<T> {
             return;
         }
         // Nothing to do if receiver dropped.
-        _ = self.sender.send_many(std::mem::take(&mut self.buffer));
+        _ = self.sender.send_batch(std::mem::take(&mut self.buffer));
     }
 }
 
@@ -129,7 +129,7 @@ impl<T> BatchSender<T> {
         self.buffer.push(value);
         // TODO: consider using the full capacity if Vec overallocated.
         if self.buffer.len() == self.capacity {
-            match self.sender.send_many(std::mem::take(&mut self.buffer)) {
+            match self.sender.send_batch(std::mem::take(&mut self.buffer)) {
                 Ok(drained_vec) => {
                     self.buffer = drained_vec;
                 }
@@ -141,7 +141,7 @@ impl<T> BatchSender<T> {
         Ok(())
     }
 
-    pub fn send_many<I: Into<Vec<T>>>(&mut self, values: I) -> Result<(), SendError<()>> {
+    pub fn send_batch<I: Into<Vec<T>>>(&mut self, values: I) -> Result<(), SendError<()>> {
         for value in values.into() {
             self.send(value)?;
         }
@@ -202,14 +202,14 @@ impl<'a, T> Future for Recv<'a, T> {
 }
 
 #[must_use = "futures do nothing unless you .await or poll them"]
-pub struct RecvMany<'a, T> {
+pub struct RecvBatch<'a, T> {
     receiver: &'a Receiver<T>,
     element_limit: usize,
 }
 
-impl<'a, T> Unpin for RecvMany<'a, T> {}
+impl<'a, T> Unpin for RecvBatch<'a, T> {}
 
-impl<'a, T> Future for RecvMany<'a, T> {
+impl<'a, T> Future for RecvBatch<'a, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -236,8 +236,8 @@ impl<T> Receiver<T> {
         Recv { receiver: self }
     }
 
-    pub fn recv_many(&self, element_limit: usize) -> RecvMany<'_, T> {
-        RecvMany {
+    pub fn recv_batch(&self, element_limit: usize) -> RecvBatch<'_, T> {
+        RecvBatch {
             receiver: self,
             element_limit,
         }

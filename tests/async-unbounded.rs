@@ -118,13 +118,13 @@ fn two_reads_from_one_push() {
             assert_eq!(Some(20), rx2.recv().await);
         })
         .unwrap();
-    tx.send_many([10, 20]).unwrap();
+    tx.send_batch([10, 20]).unwrap();
 
     pool.run()
 }
 
 #[test]
-fn push_many_wakes_both() {
+fn push_batch_wakes_both() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
@@ -143,7 +143,7 @@ fn push_many_wakes_both() {
         .unwrap();
     spawner
         .spawn(async move {
-            tx.send_many([10, 20]).unwrap();
+            tx.send_batch([10, 20]).unwrap();
         })
         .unwrap();
 
@@ -151,16 +151,16 @@ fn push_many_wakes_both() {
 }
 
 #[test]
-fn recv_many_returning_all() {
+fn recv_batch_returning_all() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_many([10, 20, 30]).unwrap();
+    tx.send_batch([10, 20, 30]).unwrap();
     spawner
         .spawn(async move {
-            assert_eq!(vec![10, 20, 30], rx.recv_many(100).await);
+            assert_eq!(vec![10, 20, 30], rx.recv_batch(100).await);
         })
         .unwrap();
 
@@ -168,17 +168,17 @@ fn recv_many_returning_all() {
 }
 
 #[test]
-fn recv_many_returning_some() {
+fn recv_batch_returning_some() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_many([10, 20, 30]).unwrap();
+    tx.send_batch([10, 20, 30]).unwrap();
     spawner
         .spawn(async move {
-            assert_eq!(vec![10, 20], rx.recv_many(2).await);
-            assert_eq!(vec![30], rx.recv_many(2).await);
+            assert_eq!(vec![10, 20], rx.recv_batch(2).await);
+            assert_eq!(vec![30], rx.recv_batch(2).await);
         })
         .unwrap();
 
@@ -186,7 +186,7 @@ fn recv_many_returning_some() {
 }
 
 #[test]
-fn recv_many_returns_empty_when_no_tx() {
+fn recv_batch_returns_empty_when_no_tx() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
@@ -195,7 +195,7 @@ fn recv_many_returns_empty_when_no_tx() {
 
     spawner
         .spawn(async move {
-            assert_eq!(Vec::<()>::new(), rx.recv_many(2).await);
+            assert_eq!(Vec::<()>::new(), rx.recv_batch(2).await);
         })
         .unwrap();
 

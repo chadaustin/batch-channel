@@ -25,7 +25,7 @@ trait UnboundedChannel: UnboundedChannelName {
     ) -> anyhow::Result<()>;
     async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T>;
 
-    fn send_many<T: fmt::Debug + Send + Sync, I: Into<Vec<T>>>(
+    fn send_batch<T: fmt::Debug + Send + Sync, I: Into<Vec<T>>>(
         tx: &Self::Sender<T>,
         values: I,
     ) -> anyhow::Result<Vec<T>> {
@@ -36,7 +36,7 @@ trait UnboundedChannel: UnboundedChannelName {
         Ok(values)
     }
 
-    async fn recv_many<T: Send>(rx: &mut Self::Receiver<T>, element_limit: usize) -> Vec<T> {
+    async fn recv_batch<T: Send>(rx: &mut Self::Receiver<T>, element_limit: usize) -> Vec<T> {
         let mut v = Vec::with_capacity(element_limit);
         loop {
             match Self::recv(rx).await {
@@ -77,17 +77,17 @@ impl UnboundedChannel for BatchChannel {
     async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.recv().await
     }
-    fn send_many<T: fmt::Debug + Send + Sync + 'static, I: Into<Vec<T>>>(
+    fn send_batch<T: fmt::Debug + Send + Sync + 'static, I: Into<Vec<T>>>(
         tx: &Self::Sender<T>,
         values: I,
     ) -> anyhow::Result<Vec<T>> {
-        Ok(tx.send_many(values)?)
+        Ok(tx.send_batch(values)?)
     }
-    async fn recv_many<T: Send + 'static>(
+    async fn recv_batch<T: Send + 'static>(
         rx: &mut Self::Receiver<T>,
         element_limit: usize,
     ) -> Vec<T> {
-        rx.recv_many(element_limit).await
+        rx.recv_batch(element_limit).await
     }
 }
 
@@ -203,13 +203,13 @@ async fn sender<UC: UnboundedChannel>(
             if vec.len() < batch_size {
                 vec.push(i);
             } else {
-                vec = UC::send_many(&tx, vec).unwrap();
+                vec = UC::send_batch(&tx, vec).unwrap();
                 // The intent of this benchmark is to interleave send and recv.
                 yield_now().await;
             }
         }
         if !vec.is_empty() {
-            _ = UC::send_many(&tx, vec).unwrap();
+            _ = UC::send_batch(&tx, vec).unwrap();
         }
     }
 }
@@ -219,7 +219,7 @@ async fn receiver<UC: UnboundedChannel + Send>(mut rx: UC::Receiver<usize>, batc
         while let Some(_) = UC::recv(&mut rx).await {}
     } else {
         loop {
-            let v = UC::recv_many(&mut rx, batch_size).await;
+            let v = UC::recv_batch(&mut rx, batch_size).await;
             if v.is_empty() {
                 break;
             }
