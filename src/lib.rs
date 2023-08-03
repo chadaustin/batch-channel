@@ -13,6 +13,7 @@ use std::task::Waker;
 
 // TODO: we could replace Arc with Box and rely on atomic tx_count and
 // rx_count.
+#[derive(Debug)]
 struct State<T> {
     queue: VecDeque<T>,
     tx_count: usize,
@@ -28,6 +29,8 @@ fn wake_all<T>(mut state: MutexGuard<State<T>>) {
     }
 }
 
+/// The sending half of a channel.
+#[derive(Debug)]
 pub struct Sender<T> {
     state: Arc<Mutex<State<T>>>,
 }
@@ -52,7 +55,11 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// An error returned from [Sender::send] when all [Receiver]s are
+/// dropped.
+///
+/// The unsent value is returned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SendError<T>(pub T);
 
 impl<T> fmt::Display for SendError<T> {
@@ -64,14 +71,9 @@ impl<T> fmt::Display for SendError<T> {
 impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
 impl<T> Sender<T> {
-    pub fn batch(self, capacity: usize) -> BatchSender<T> {
-        BatchSender {
-            sender: self,
-            capacity,
-            buffer: Vec::with_capacity(capacity),
-        }
-    }
-
+    /// Send a single value.
+    ///
+    /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = self.state.lock().unwrap();
         if state.rx_count == 0 {
@@ -89,6 +91,11 @@ impl<T> Sender<T> {
         Ok(())
     }
 
+    /// Send multiple values.
+    ///
+    /// If all receivers are dropped, the values are returned in
+    /// [SendError] untouched. Either the entire batch is sent or none
+    /// of it is sent.
     pub fn send_batch<I: Into<Vec<T>>>(&self, values: I) -> Result<Vec<T>, SendError<Vec<T>>> {
         // This iterator might be expensive. Evaluate it before the lock is held.
         let mut values: Vec<_> = values.into();
@@ -108,14 +115,32 @@ impl<T> Sender<T> {
 
         Ok(values)
     }
+
+    /// Starts a [BatchSender] with the specified capacity.
+    ///
+    /// [BatchSender] manages a single allocation containing
+    /// `capacity` elements and automatically sends batches when it
+    /// reaches capacity.
+    pub fn batch(self, capacity: usize) -> BatchSender<T> {
+        BatchSender {
+            sender: self,
+            capacity,
+            buffer: Vec::with_capacity(capacity),
+        }
+    }
 }
 
+/// Automatically sends values on the channel in batches.
+///
+/// Any unsent values are sent upon drop.
+#[derive(Debug)]
 pub struct BatchSender<T> {
     sender: Sender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
 
+/// Sends remaining values.
 impl<T> Drop for BatchSender<T> {
     fn drop(&mut self) {
         if self.buffer.is_empty() {
@@ -127,6 +152,9 @@ impl<T> Drop for BatchSender<T> {
 }
 
 impl<T> BatchSender<T> {
+    /// Buffers a single value to be sent on the channel.
+    ///
+    /// Sends the batch if the buffer is full.
     pub fn send(&mut self, value: T) -> Result<(), SendError<()>> {
         self.buffer.push(value);
         // TODO: consider using the full capacity if Vec overallocated.
@@ -143,6 +171,8 @@ impl<T> BatchSender<T> {
         Ok(())
     }
 
+    /// Buffers multiple values, sending batches as the internal
+    /// buffer reaches capacity.
     pub fn send_batch<I: Into<Vec<T>>>(&mut self, values: I) -> Result<(), SendError<()>> {
         for value in values.into() {
             self.send(value)?;
@@ -153,6 +183,8 @@ impl<T> BatchSender<T> {
     // TODO: add a drain method?
 }
 
+/// The receiving half of a channel.
+#[derive(Debug)]
 pub struct Receiver<T> {
     state: Arc<Mutex<State<T>>>,
 }
@@ -177,6 +209,9 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
+/// A [Future] type that waits for a single value.
+///
+/// Returns None if all senders are dropped.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Recv<'a, T> {
     receiver: &'a Receiver<T>,
@@ -203,6 +238,13 @@ impl<'a, T> Future for Recv<'a, T> {
     }
 }
 
+/// A [Future] type that reads up to `element_limit` values from the
+/// queue.
+///
+/// Up to `element_limit` values are returned if they're already
+/// available. Otherwise, waits for any values to be available.
+///
+/// Returns an empty [Vec] if all senders are dropped.
 #[must_use = "futures do nothing unless you .await or poll them"]
 pub struct RecvBatch<'a, T> {
     receiver: &'a Receiver<T>,
@@ -234,10 +276,16 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 }
 
 impl<T> Receiver<T> {
+    /// Wait for a single value from the stream.
+    ///
+    /// Returns [None] if all [Sender]s are dropped.
     pub fn recv(&self) -> Recv<'_, T> {
         Recv { receiver: self }
     }
 
+    /// Wait for up to `element_limit` values from the stream.
+    ///
+    /// Returns an empty [Vec] if all [Sender]s are dropped.
     pub fn recv_batch(&self, element_limit: usize) -> RecvBatch<'_, T> {
         RecvBatch {
             receiver: self,
@@ -246,6 +294,8 @@ impl<T> Receiver<T> {
     }
 }
 
+/// Allocates a new, unbounded channel and returns the sender,
+/// receiver pair.
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let state = Arc::new(Mutex::new(State {
         queue: VecDeque::new(),

@@ -1,4 +1,4 @@
-async channel that reduces overhead by reading and writing many
+async MPMC channel that reduces overhead by reading and writing many
 values at once.
 
 Sometimes large volumes of small values are farmed out to workers
