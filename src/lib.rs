@@ -138,11 +138,12 @@ impl<T> Sender<T> {
         Ok(values)
     }
 
-    /// Starts a [BatchSender] with the specified capacity.
+    /// Converts this [Sender] into a [BatchSender] with the specified
+    /// capacity.
     ///
     /// [BatchSender] manages a single allocation containing
-    /// `capacity` elements and automatically sends batches when it
-    /// reaches capacity.
+    /// `capacity` elements and automatically sends batches as it
+    /// fills.
     pub fn batch(self, capacity: usize) -> BatchSender<T> {
         BatchSender {
             sender: self,
@@ -232,11 +233,8 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-/// A [Future] type that waits for a single value.
-///
-/// Returns None if all senders are dropped.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct Recv<'a, T> {
+struct Recv<'a, T> {
     receiver: &'a Receiver<T>,
 }
 
@@ -261,15 +259,8 @@ impl<'a, T> Future for Recv<'a, T> {
     }
 }
 
-/// A [Future] type that reads up to `element_limit` values from the
-/// queue.
-///
-/// Up to `element_limit` values are returned if they're already
-/// available. Otherwise, waits for any values to be available.
-///
-/// Returns an empty [Vec] if all senders are dropped.
 #[must_use = "futures do nothing unless you .await or poll them"]
-pub struct RecvBatch<'a, T> {
+struct RecvBatch<'a, T> {
     receiver: &'a Receiver<T>,
     element_limit: usize,
 }
@@ -299,17 +290,20 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 }
 
 impl<T> Receiver<T> {
-    /// Wait for a single value from the stream.
+    /// Wait for a single value from the channel.
     ///
     /// Returns [None] if all [Sender]s are dropped.
-    pub fn recv(&self) -> Recv<'_, T> {
+    pub fn recv(&self) -> impl Future<Output = Option<T>> + '_ {
         Recv { receiver: self }
     }
 
-    /// Wait for up to `element_limit` values from the stream.
+    /// Wait for up to `element_limit` values from the channel.
+    ///
+    /// Up to `element_limit` values are returned if they're already
+    /// available. Otherwise, waits for any values to be available.
     ///
     /// Returns an empty [Vec] if all [Sender]s are dropped.
-    pub fn recv_batch(&self, element_limit: usize) -> RecvBatch<'_, T> {
+    pub fn recv_batch(&self, element_limit: usize) -> impl Future<Output = Vec<T>> + '_ {
         RecvBatch {
             receiver: self,
             element_limit,
