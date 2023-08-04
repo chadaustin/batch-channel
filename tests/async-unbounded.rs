@@ -118,7 +118,7 @@ fn two_reads_from_one_push() {
             assert_eq!(Some(20), rx2.recv().await);
         })
         .unwrap();
-    tx.send_batch([10, 20]).unwrap();
+    tx.send_iter([10, 20]).unwrap();
 
     pool.run()
 }
@@ -143,7 +143,7 @@ fn send_batch_wakes_both() {
         .unwrap();
     spawner
         .spawn(async move {
-            tx.send_batch([10, 20]).unwrap();
+            tx.send_iter([10, 20]).unwrap();
         })
         .unwrap();
 
@@ -190,7 +190,7 @@ fn recv_batch_returning_all() {
 
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_batch([10, 20, 30]).unwrap();
+    tx.send_iter([10, 20, 30]).unwrap();
     spawner
         .spawn(async move {
             assert_eq!(vec![10, 20, 30], rx.recv_batch(100).await);
@@ -207,7 +207,7 @@ fn recv_batch_returning_some() {
 
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_batch([10, 20, 30]).unwrap();
+    tx.send_iter([10, 20, 30]).unwrap();
     spawner
         .spawn(async move {
             assert_eq!(vec![10, 20], rx.recv_batch(2).await);

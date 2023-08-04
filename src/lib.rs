@@ -116,15 +116,12 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    /// Send multiple values.
+    /// Drain a [Vec] into the channel without deallocating it.
     ///
-    /// If all receivers are dropped, the values are returned in
-    /// [SendError] untouched. Either the entire batch is sent or none
-    /// of it is sent.
-    pub fn send_batch<I: Into<Vec<T>>>(&self, values: I) -> Result<Vec<T>, SendError<Vec<T>>> {
-        // This iterator might be expensive. Evaluate it before the lock is held.
-        let mut values: Vec<_> = values.into();
-
+    /// This is a convenience method for allocation-free batched
+    /// sends. The `values` vector is drained, and then returned with
+    /// the same capacity it had.
+    pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
         let mut state = self.state.lock().unwrap();
         if state.rx_count == 0 {
             assert!(state.queue.is_empty());
@@ -171,8 +168,9 @@ impl<T> Drop for BatchSender<T> {
         if self.buffer.is_empty() {
             return;
         }
-        // Nothing to do if receiver dropped.
-        _ = self.sender.send_batch(std::mem::take(&mut self.buffer));
+        // If receivers dropped, there's nothing we can do with any
+        // held values.
+        _ = self.sender.send_vec(std::mem::take(&mut self.buffer));
     }
 }
 
@@ -184,7 +182,7 @@ impl<T> BatchSender<T> {
         self.buffer.push(value);
         // TODO: consider using the full capacity if Vec overallocated.
         if self.buffer.len() == self.capacity {
-            match self.sender.send_batch(std::mem::take(&mut self.buffer)) {
+            match self.sender.send_vec(std::mem::take(&mut self.buffer)) {
                 Ok(drained_vec) => {
                     self.buffer = drained_vec;
                 }

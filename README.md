@@ -18,7 +18,7 @@ let (tx, rx) = batch_channel::unbounded();
 # let v3 = 3;
 
 tx.send(value).unwrap();
-tx.send_batch([v1, v2, v3].as_ref()).unwrap();
+tx.send_iter([v1, v2, v3]).unwrap();
 
 match rx.recv().await {
   Some(value) => println!("single {value}"),
