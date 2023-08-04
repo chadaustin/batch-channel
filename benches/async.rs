@@ -25,11 +25,10 @@ trait UnboundedChannel: UnboundedChannelName {
     ) -> anyhow::Result<()>;
     async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T>;
 
-    fn send_batch<T: fmt::Debug + Send + Sync, I: Into<Vec<T>>>(
+    fn send_vec<T: fmt::Debug + Send + Sync>(
         tx: &Self::Sender<T>,
-        values: I,
+        mut values: Vec<T>,
     ) -> anyhow::Result<Vec<T>> {
-        let mut values: Vec<_> = values.into();
         for v in values.drain(..) {
             Self::send(tx, v)?;
         }
@@ -77,11 +76,11 @@ impl UnboundedChannel for BatchChannel {
     async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.recv().await
     }
-    fn send_batch<T: fmt::Debug + Send + Sync + 'static, I: Into<Vec<T>>>(
+    fn send_vec<T: fmt::Debug + Send + Sync + 'static>(
         tx: &Self::Sender<T>,
-        values: I,
+        values: Vec<T>,
     ) -> anyhow::Result<Vec<T>> {
-        Ok(tx.send_batch(values)?)
+        Ok(tx.send_vec(values)?)
     }
     async fn recv_batch<T: Send + 'static>(
         rx: &mut Self::Receiver<T>,
@@ -203,13 +202,13 @@ async fn sender<UC: UnboundedChannel>(
             if vec.len() < batch_size {
                 vec.push(i);
             } else {
-                vec = UC::send_batch(&tx, vec).unwrap();
+                vec = UC::send_vec(&tx, vec).unwrap();
                 // The intent of this benchmark is to interleave send and recv.
                 yield_now().await;
             }
         }
         if !vec.is_empty() {
-            _ = UC::send_batch(&tx, vec).unwrap();
+            _ = UC::send_vec(&tx, vec).unwrap();
         }
     }
 }

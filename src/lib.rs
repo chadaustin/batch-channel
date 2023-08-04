@@ -196,8 +196,8 @@ impl<T> BatchSender<T> {
 
     /// Buffers multiple values, sending batches as the internal
     /// buffer reaches capacity.
-    pub fn send_batch<I: Into<Vec<T>>>(&mut self, values: I) -> Result<(), SendError<()>> {
-        for value in values.into() {
+    pub fn send_iter<I: IntoIterator<Item = T>>(&mut self, values: I) -> Result<(), SendError<()>> {
+        for value in values.into_iter() {
             self.send(value)?;
         }
         Ok(())
