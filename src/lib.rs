@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
@@ -273,19 +274,51 @@ impl<'a, T> Future for RecvBatch<'a, T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.receiver.state.lock().unwrap();
         let q = &mut state.queue;
-        if q.is_empty() {
+        let q_len = q.len();
+        if q_len == 0 {
             if state.tx_count == 0 {
-                Poll::Ready(Vec::new())
+                return Poll::Ready(Vec::new());
             } else {
                 state.rx_wakers.push(cx.waker().clone());
-                Poll::Pending
+                return Poll::Pending;
             }
-        } else if q.len() <= self.element_limit {
-            Poll::Ready(Vec::from(std::mem::take(q)))
-        } else {
-            let drain = q.drain(..self.element_limit);
-            Poll::Ready(drain.collect())
         }
+
+        let capacity = min(q_len, self.element_limit);
+        let v = Vec::from_iter(q.drain(..capacity));
+        Poll::Ready(v)
+    }
+}
+
+#[must_use = "futures do nothing unless you .await or poll them"]
+struct RecvVec<'a, T> {
+    receiver: &'a Receiver<T>,
+    element_limit: usize,
+    vec: &'a mut Vec<T>,
+}
+
+impl<'a, T> Unpin for RecvVec<'a, T> {}
+
+impl<'a, T> Future for RecvVec<'a, T> {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.receiver.state.lock().unwrap();
+        let q = &mut state.queue;
+        let q_len = q.len();
+        if q_len == 0 {
+            if state.tx_count == 0 {
+                assert!(self.vec.is_empty());
+                return Poll::Ready(());
+            } else {
+                state.rx_wakers.push(cx.waker().clone());
+                return Poll::Pending;
+            }
+        }
+
+        let capacity = min(q_len, self.element_limit);
+        self.vec.extend(q.drain(..capacity));
+        Poll::Ready(())
     }
 }
 
@@ -296,6 +329,8 @@ impl<T> Receiver<T> {
     pub fn recv(&self) -> impl Future<Output = Option<T>> + '_ {
         Recv { receiver: self }
     }
+
+    // TODO: try_recv
 
     /// Wait for up to `element_limit` values from the channel.
     ///
@@ -309,6 +344,31 @@ impl<T> Receiver<T> {
             element_limit,
         }
     }
+
+    /// Wait for up to `element_limit` values from the channel and
+    /// store them in `vec`.
+    ///
+    /// `vec` should be empty when passed in. Nevertheless, `recv_vec`
+    /// will clear it before adding values. The intent of `recv_vec`
+    /// is that batches can be repeatedly read by workers without new
+    /// allocations.
+    ///
+    /// It's not required, but `vec`'s capacity should be greater than
+    /// or equal to element_limit to avoid reallocation.
+    pub fn recv_vec<'a>(
+        &'a self,
+        element_limit: usize,
+        vec: &'a mut Vec<T>,
+    ) -> impl Future<Output = ()> + 'a {
+        vec.clear();
+        RecvVec {
+            receiver: self,
+            element_limit,
+            vec,
+        }
+    }
+
+    // TODO: try_recv_batch
 }
 
 /// Allocates a new, unbounded channel and returns the sender,

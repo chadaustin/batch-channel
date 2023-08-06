@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use futures::executor::LocalPool;
 use futures::task::SpawnExt;
 use std::sync::Arc;
@@ -216,6 +217,20 @@ fn recv_batch_returning_some() {
         .unwrap();
 
     pool.run();
+}
+
+#[test]
+fn recv_vec_returning_some() {
+    let (tx, rx) = batch_channel::unbounded();
+
+    tx.send_iter([10, 20, 30]).unwrap();
+    block_on(async move {
+        let mut vec = Vec::new();
+        () = rx.recv_vec(2, &mut vec).await;
+        assert_eq!(vec![10, 20], vec);
+        () = rx.recv_vec(2, &mut vec).await;
+        assert_eq!(vec![30], vec);
+    });
 }
 
 #[test]
