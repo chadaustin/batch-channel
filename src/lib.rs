@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![doc = include_str!("example.md")]
 
 use std::cmp::min;
 use std::collections::VecDeque;
