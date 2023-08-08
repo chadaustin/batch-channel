@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+cd $(dirname "$0")/..
+
+if ! git diff --exit-code HEAD ; then
+    echo "please commit uncommitted changes"
+    exit 1
+fi
+
+VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "batch-channel") | .version')
+
+if [[ "$VERSION" == "" ]]; then
+    echo "no version found"
+    exit 1
+fi
+
+echo "publishing version $VERSION"
+
+TAGNAME="v$VERSION"
+
+git tag "$TAGNAME"
+
+cargo publish
+
+git push origin "$TAGNAME"
