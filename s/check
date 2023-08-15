@@ -1,5 +1,5 @@
 #!/bin/bash
 set -e
-cd "${BASH_SOURCE%/*}"
+cd "${BASH_SOURCE%/*}"/..
 
 cargo check --tests --benches

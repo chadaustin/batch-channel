@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-cd "${BASH_SOURCE%/*}"
+cd "${BASH_SOURCE%/*}"/..
 
 if ! git diff --exit-code HEAD ; then
     echo "please commit uncommitted changes"
