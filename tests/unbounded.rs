@@ -1,9 +1,19 @@
 use futures::executor::block_on;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
-use futures::task::SpawnExt;
 use std::cell::RefCell;
+use std::future::Future;
 use std::rc::Rc;
+
+trait TestPool {
+    fn spawn<F: Future<Output = ()> + 'static>(&self, future: F);
+}
+
+impl TestPool for LocalPool {
+    fn spawn<F: Future<Output = ()> + 'static>(&self, future: F) {
+        self.spawner().spawn_local(future).unwrap();
+    }
+}
 
 #[test]
 fn send_and_recv() {
@@ -38,18 +48,13 @@ fn recv_wakes_when_sender_sends() {
     let (tx, rx) = batch_channel::unbounded();
 
     let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
-    spawner
-        .spawn(async move {
-            assert_eq!(Some(()), rx.recv().await);
-        })
-        .unwrap();
+    pool.spawn(async move {
+        assert_eq!(Some(()), rx.recv().await);
+    });
 
-    spawner
-        .spawn(async move {
-            tx.send(()).unwrap();
-        })
-        .unwrap();
+    pool.spawn(async move {
+        tx.send(()).unwrap();
+    });
 
     pool.run();
 }
@@ -59,18 +64,13 @@ fn recv_wakes_when_sender_drops() {
     let (tx, rx) = batch_channel::unbounded();
 
     let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
-    spawner
-        .spawn(async move {
-            assert_eq!(None as Option<()>, rx.recv().await);
-        })
-        .unwrap();
+    pool.spawn(async move {
+        assert_eq!(None as Option<()>, rx.recv().await);
+    });
 
-    spawner
-        .spawn(async move {
-            drop(tx);
-        })
-        .unwrap();
+    pool.spawn(async move {
+        drop(tx);
+    });
 
     pool.run();
 }
@@ -100,21 +100,16 @@ fn two_receivers_and_two_senders() {
 #[test]
 fn two_reads_from_one_push() {
     let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
 
     let (tx, rx1) = batch_channel::unbounded();
     let rx2 = rx1.clone();
 
-    spawner
-        .spawn(async move {
-            assert_eq!(Some(10), rx1.recv().await);
-        })
-        .unwrap();
-    spawner
-        .spawn(async move {
-            assert_eq!(Some(20), rx2.recv().await);
-        })
-        .unwrap();
+    pool.spawn(async move {
+        assert_eq!(Some(10), rx1.recv().await);
+    });
+    pool.spawn(async move {
+        assert_eq!(Some(20), rx2.recv().await);
+    });
     tx.send_iter([10, 20]).unwrap();
 
     pool.run()
@@ -123,26 +118,19 @@ fn two_reads_from_one_push() {
 #[test]
 fn send_batch_wakes_both() {
     let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
 
     let (tx, rx1) = batch_channel::unbounded();
     let rx2 = rx1.clone();
 
-    spawner
-        .spawn(async move {
-            assert_eq!(Some(10), rx1.recv().await);
-        })
-        .unwrap();
-    spawner
-        .spawn(async move {
-            assert_eq!(Some(20), rx2.recv().await);
-        })
-        .unwrap();
-    spawner
-        .spawn(async move {
-            tx.send_iter([10, 20]).unwrap();
-        })
-        .unwrap();
+    pool.spawn(async move {
+        assert_eq!(Some(10), rx1.recv().await);
+    });
+    pool.spawn(async move {
+        assert_eq!(Some(20), rx2.recv().await);
+    });
+    pool.spawn(async move {
+        tx.send_iter([10, 20]).unwrap();
+    });
 
     pool.run()
 }
@@ -224,19 +212,16 @@ fn recv_batch_returns_empty_when_no_tx() {
 #[test]
 fn batch_locally_accumulates() {
     let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
 
     let (tx, rx) = batch_channel::unbounded();
     let read_values = Rc::new(RefCell::new(Vec::new()));
     let read_values_outer = read_values.clone();
 
-    spawner
-        .spawn_local(async move {
-            while let Some(v) = rx.recv().await {
-                read_values.borrow_mut().push(v);
-            }
-        })
-        .unwrap();
+    pool.spawn(async move {
+        while let Some(v) = rx.recv().await {
+            read_values.borrow_mut().push(v);
+        }
+    });
 
     let read_values = read_values_outer;
 
