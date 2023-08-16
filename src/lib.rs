@@ -185,16 +185,10 @@ impl<T> BatchSender<T> {
         self.buffer.push(value);
         // TODO: consider using the full capacity if Vec overallocated.
         if self.buffer.len() == self.capacity {
-            match self.sender.send_vec(std::mem::take(&mut self.buffer)) {
-                Ok(drained_vec) => {
-                    self.buffer = drained_vec;
-                }
-                Err(_) => {
-                    return Err(SendError(()));
-                }
-            }
+            self.drain()
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     /// Buffers multiple values, sending batches as the internal
@@ -206,7 +200,17 @@ impl<T> BatchSender<T> {
         Ok(())
     }
 
-    // TODO: add a drain method?
+    /// Sends any buffered values, clearing the current batch.
+    pub fn drain(&mut self) -> Result<(), SendError<()>> {
+        // TODO: send_iter
+        match self.sender.send_vec(std::mem::take(&mut self.buffer)) {
+            Ok(drained_vec) => {
+                self.buffer = drained_vec;
+                Ok(())
+            }
+            Err(_) => Err(SendError(())),
+        }
+    }
 }
 
 /// The receiving half of a channel.
