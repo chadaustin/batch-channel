@@ -1,8 +1,9 @@
 use futures::executor::block_on;
 use futures::executor::LocalPool;
+use futures::task::LocalSpawnExt;
 use futures::task::SpawnExt;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[test]
 fn send_and_recv() {
@@ -226,13 +227,13 @@ fn batch_locally_accumulates() {
     let spawner = pool.spawner();
 
     let (tx, rx) = batch_channel::unbounded();
-    let read_values = Arc::new(Mutex::new(Vec::new()));
+    let read_values = Rc::new(RefCell::new(Vec::new()));
     let read_values_outer = read_values.clone();
 
     spawner
-        .spawn(async move {
+        .spawn_local(async move {
             while let Some(v) = rx.recv().await {
-                read_values.lock().unwrap().push(v);
+                read_values.borrow_mut().push(v);
             }
         })
         .unwrap();
@@ -243,16 +244,16 @@ fn batch_locally_accumulates() {
 
     assert_eq!(Ok(()), tx.send(1));
     pool.run_until_stalled();
-    assert_eq!(0, read_values.lock().unwrap().len());
+    assert_eq!(0, read_values.borrow().len());
 
     assert_eq!(Ok(()), tx.send(2));
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2], *read_values.lock().unwrap());
+    assert_eq!(vec![1, 2], *read_values.borrow());
 
     assert_eq!(Ok(()), tx.send(3));
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2], *read_values.lock().unwrap());
+    assert_eq!(vec![1, 2], *read_values.borrow());
     drop(tx);
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2, 3], *read_values.lock().unwrap());
+    assert_eq!(vec![1, 2, 3], *read_values.borrow());
 }
