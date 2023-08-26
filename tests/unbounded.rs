@@ -1,19 +1,8 @@
-use futures::executor::block_on;
-use futures::executor::LocalPool;
-use futures::task::LocalSpawnExt;
 use std::cell::RefCell;
-use std::future::Future;
 use std::rc::Rc;
 
-trait TestPool {
-    fn spawn<F: Future<Output = ()> + 'static>(&self, future: F);
-}
-
-impl TestPool for LocalPool {
-    fn spawn<F: Future<Output = ()> + 'static>(&self, future: F) {
-        self.spawner().spawn_local(future).unwrap();
-    }
-}
+mod fixture;
+use fixture::*;
 
 #[test]
 fn send_and_recv() {
