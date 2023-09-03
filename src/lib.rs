@@ -246,7 +246,7 @@ pub struct BoundedSender<T> {
 }
 
 impl<T> BoundedSender<T> {
-    pub fn send(&self, value: T) -> Send<'_, T> {
+    pub fn send(&self, value: T) -> impl Future<Output = ()> + '_ {
         Send {
             sender: self,
             value: Some(value),
@@ -255,7 +255,7 @@ impl<T> BoundedSender<T> {
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct Send<'a, T> {
+struct Send<'a, T> {
     sender: &'a BoundedSender<T>,
     value: Option<T>,
 }
