@@ -1,3 +1,6 @@
+#![allow(non_snake_case)]
+
+use batch_channel::SendError;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,9 +12,16 @@ fn zero_capacity_rounds_up_to_one() {
     let (tx, rx) = batch_channel::bounded(1);
 
     block_on(async move {
-        tx.send(10).await;
+        tx.send(10).await.unwrap();
         assert_eq!(Some(10), rx.recv().await);
     });
+}
+
+#[test]
+fn send_returns_SendError_if_receivers_dropped() {
+    let (tx, rx) = batch_channel::bounded(1);
+    drop(rx);
+    assert_eq!(Err(SendError("x")), block_on(tx.send("x")));
 }
 
 #[test]
@@ -25,9 +35,9 @@ fn recv_unblocks_send() {
         let state = state.clone();
         async move {
             *state.borrow_mut() = "sending";
-            tx.send(10).await;
+            tx.send(10).await.unwrap();
             *state.borrow_mut() = "sent 1";
-            tx.send(20).await;
+            tx.send(20).await.unwrap();
             *state.borrow_mut() = "sent 2";
         }
     });
@@ -54,9 +64,9 @@ fn recv_batch_unblocks_send() {
         let state = state.clone();
         async move {
             *state.borrow_mut() = "sending";
-            tx.send(10).await;
+            tx.send(10).await.unwrap();
             *state.borrow_mut() = "sent 1";
-            tx.send(20).await;
+            tx.send(20).await.unwrap();
             *state.borrow_mut() = "sent 2";
         }
     });

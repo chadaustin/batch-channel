@@ -246,7 +246,7 @@ pub struct BoundedSender<T> {
 }
 
 impl<T> BoundedSender<T> {
-    pub fn send(&self, value: T) -> impl Future<Output = ()> + '_ {
+    pub fn send(&self, value: T) -> impl Future<Output = Result<(), SendError<T>>> + '_ {
         Send {
             sender: self,
             value: Some(value),
@@ -261,14 +261,17 @@ struct Send<'a, T> {
 }
 
 impl<'a, T> Future for Send<'a, T> {
-    type Output = ();
+    type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.sender.state.lock().unwrap();
+        if state.rx_count == 0 {
+            return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
+        }
         if state.queue.len() < state.target_capacity() {
             state.queue.push_back(self.as_mut().value.take().unwrap());
             wake_all_rx(state);
-            Poll::Ready(())
+            Poll::Ready(Ok(()))
         } else {
             state.tx_wakers.push(cx.waker().clone());
             Poll::Pending
