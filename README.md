@@ -10,8 +10,6 @@ SQLite's lock and bulk queries can be issued.
 
 One can imagine natural, currently unimplemented, extensions to this
 crate:
-* Synchronous channels
-* Bounded channels
 * Channels with priority
 * impls for `futures::sink::Sink` and `futures::stream::Stream`
 
