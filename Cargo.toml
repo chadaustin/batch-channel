@@ -21,7 +21,12 @@ async-trait = "0.1"
 criterion = "0.5"
 crossbeam = "0.8"
 futures = "0.3"
+tiny-bench = "0.3"
 
 [[bench]]
 name = "async"
+harness = false
+
+[[bench]]
+name = "alloc"
 harness = false

@@ -13,17 +13,29 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
+const UNBOUNDED_CAPACITY: usize = usize::MAX;
+
 // TODO: we could replace Arc with Box and rely on atomic tx_count and
 // rx_count.
 #[derive(Debug)]
 struct State<T> {
     queue: VecDeque<T>,
+    capacity: usize,
     tx_count: usize,
     rx_count: usize,
+    tx_wakers: Vec<Waker>,
     rx_wakers: Vec<Waker>,
 }
 
-fn wake_all<T>(mut state: MutexGuard<State<T>>) {
+fn wake_all_tx<T>(mut state: MutexGuard<State<T>>) {
+    let wakers = std::mem::take(&mut state.tx_wakers);
+    drop(state);
+    for waker in wakers {
+        waker.wake();
+    }
+}
+
+fn wake_all_rx<T>(mut state: MutexGuard<State<T>>) {
     let wakers = std::mem::take(&mut state.rx_wakers);
     drop(state);
     for waker in wakers {
@@ -31,7 +43,17 @@ fn wake_all<T>(mut state: MutexGuard<State<T>>) {
     }
 }
 
-/// The sending half of a channel.
+impl<T> State<T> {
+    fn target_capacity(&self) -> usize {
+        // TODO: We could offer an option to use queue.capacity
+        // instead.
+        self.capacity
+    }
+}
+
+// Sender
+
+/// The sending half of an unbounded channel.
 #[derive(Debug)]
 pub struct Sender<T> {
     state: Arc<Mutex<State<T>>>,
@@ -52,7 +74,7 @@ impl<T> Drop for Sender<T> {
         assert!(state.tx_count >= 1);
         state.tx_count -= 1;
         if state.tx_count == 0 {
-            wake_all(state);
+            wake_all_rx(state);
         }
     }
 }
@@ -88,7 +110,7 @@ impl<T> Sender<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all(state);
+        wake_all_rx(state);
 
         Ok(())
     }
@@ -108,12 +130,12 @@ impl<T> Sender<T> {
             return Err(SendError(values));
         }
 
-        state.queue.extend(values.into_iter());
+        state.queue.extend(values);
 
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all(state);
+        wake_all_rx(state);
 
         Ok(())
     }
@@ -135,7 +157,7 @@ impl<T> Sender<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all(state);
+        wake_all_rx(state);
 
         Ok(values)
     }
@@ -154,6 +176,8 @@ impl<T> Sender<T> {
         }
     }
 }
+
+// BatchSender
 
 /// Automatically sends values on the channel in batches.
 ///
@@ -213,6 +237,49 @@ impl<T> BatchSender<T> {
     }
 }
 
+// BoundedSender
+
+/// The sending half of a bounded channel.
+#[derive(Debug)]
+pub struct BoundedSender<T> {
+    state: Arc<Mutex<State<T>>>,
+}
+
+impl<T> BoundedSender<T> {
+    pub fn send(&self, value: T) -> Send<'_, T> {
+        Send {
+            sender: self,
+            value: Some(value),
+        }
+    }
+}
+
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct Send<'a, T> {
+    sender: &'a BoundedSender<T>,
+    value: Option<T>,
+}
+
+impl<'a, T> Future for Send<'a, T> {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.sender.state.lock().unwrap();
+        if state.queue.len() < state.target_capacity() {
+            state.queue.push_back(self.as_mut().value.take().unwrap());
+            wake_all_rx(state);
+            Poll::Ready(())
+        } else {
+            state.tx_wakers.push(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+impl<'a, T> Unpin for Send<'a, T> {}
+
+// Receiver
+
 /// The receiving half of a channel.
 #[derive(Debug)]
 pub struct Receiver<T> {
@@ -252,7 +319,10 @@ impl<'a, T> Future for Recv<'a, T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.receiver.state.lock().unwrap();
         match state.queue.pop_front() {
-            Some(value) => Poll::Ready(Some(value)),
+            Some(value) => {
+                wake_all_tx(state);
+                Poll::Ready(Some(value))
+            }
             None => {
                 if state.tx_count == 0 {
                     Poll::Ready(None)
@@ -291,6 +361,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 
         let capacity = min(q_len, self.element_limit);
         let v = Vec::from_iter(q.drain(..capacity));
+        wake_all_tx(state);
         Poll::Ready(v)
     }
 }
@@ -350,6 +421,8 @@ impl<T> Receiver<T> {
         }
     }
 
+    // TODO: try_recv_batch
+
     /// Wait for up to `element_limit` values from the channel and
     /// store them in `vec`.
     ///
@@ -373,7 +446,32 @@ impl<T> Receiver<T> {
         }
     }
 
-    // TODO: try_recv_batch
+    // TODO: try_recv_vec
+}
+
+// Constructors
+
+/// Allocates a new, bounded channel and returns the sender, receiver
+/// pair.
+///
+/// Rust async is polling, so synchronous channels are not supported.
+/// Therefore, a capacity of 0 is rounded up to 1.
+pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
+    let capacity = capacity.max(1);
+    let state = Arc::new(Mutex::new(State {
+        queue: VecDeque::new(),
+        capacity,
+        tx_count: 1,
+        rx_count: 1,
+        tx_wakers: Vec::new(),
+        rx_wakers: Vec::new(),
+    }));
+    (
+        BoundedSender {
+            state: state.clone(),
+        },
+        Receiver { state },
+    )
 }
 
 /// Allocates a new, unbounded channel and returns the sender,
@@ -381,8 +479,10 @@ impl<T> Receiver<T> {
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let state = Arc::new(Mutex::new(State {
         queue: VecDeque::new(),
+        capacity: UNBOUNDED_CAPACITY,
         tx_count: 1,
         rx_count: 1,
+        tx_wakers: Vec::new(),
         rx_wakers: Vec::new(),
     }));
     (
