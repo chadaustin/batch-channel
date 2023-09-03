@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 cd "${BASH_SOURCE%/*}"/..
+set -o pipefail
 
 if ! git diff --exit-code HEAD ; then
     echo "please commit uncommitted changes"
