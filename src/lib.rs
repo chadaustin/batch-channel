@@ -5,6 +5,7 @@ use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
+use std::iter::Peekable;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -218,6 +219,7 @@ impl<T> BatchSender<T> {
     /// Buffers multiple values, sending batches as the internal
     /// buffer reaches capacity.
     pub fn send_iter<I: IntoIterator<Item = T>>(&mut self, values: I) -> Result<(), SendError<()>> {
+        // TODO: We could return the remainder of I under cancellation.
         for value in values.into_iter() {
             self.send(value)?;
         }
@@ -246,10 +248,31 @@ pub struct BoundedSender<T> {
 }
 
 impl<T> BoundedSender<T> {
+    /// Send a single value.
+    ///
+    /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> impl Future<Output = Result<(), SendError<T>>> + '_ {
         Send {
             sender: self,
             value: Some(value),
+        }
+    }
+
+    /// Send multiple values.
+    ///
+    /// If all receivers are dropped, the values are returned in
+    /// [SendError] untouched. Either the entire batch is sent or none
+    /// of it is sent.
+    pub fn send_iter<'a, I>(
+        &'a self,
+        values: I,
+    ) -> impl Future<Output = Result<(), SendError<()>>> + 'a
+    where
+        I: IntoIterator<Item = T> + 'a,
+    {
+        SendIter {
+            sender: self,
+            values: Some(values.into_iter().peekable()),
         }
     }
 }
@@ -280,6 +303,48 @@ impl<'a, T> Future for Send<'a, T> {
 }
 
 impl<'a, T> Unpin for Send<'a, T> {}
+
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+struct SendIter<'a, T, I: Iterator<Item = T>> {
+    sender: &'a BoundedSender<T>,
+    values: Option<Peekable<I>>,
+}
+
+impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
+    type Output = Result<(), SendError<()>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.sender.state.lock().unwrap();
+        if state.rx_count == 0 {
+            return Poll::Ready(Err(SendError(())));
+        }
+
+        // There is an awkward set of constraints here.
+        // 1. To check whether an iterator contains an item, one must be popped.
+        // 2. If the receivers are cancelled, we'd like to return the iterator whole.
+        // 3. If we don't know whether there are any remaining items, we must block
+        //    if the queue is at capacity.
+        // We relax constraint #2 because #3 is preferable.
+        // TODO: We could return Peekable<I> instead.
+
+        let pi = self.values.as_mut().unwrap();
+        loop {
+            if pi.peek().is_none() {
+                // TODO: We could optimize the case that send_iter was called with an empty
+                // iterator, but that's unlikely. We probably sent a message in this loop.
+                wake_all_rx(state);
+                return Poll::Ready(Ok(()));
+            } else if state.queue.len() < state.target_capacity() {
+                state.queue.push_back(pi.next().unwrap());
+            } else {
+                state.tx_wakers.push(cx.waker().clone());
+                return Poll::Pending;
+            }
+        }
+    }
+}
+
+impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // Receiver
 

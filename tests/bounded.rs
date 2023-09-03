@@ -82,4 +82,12 @@ fn recv_batch_unblocks_send() {
     pool.run();
 }
 
-// TODO: send() returns error when rx is dropped
+#[test]
+fn recv_batch_returning_all() {
+    let (tx, rx) = batch_channel::bounded(3);
+
+    block_on(async move {
+        tx.send_iter([10, 20, 30]).await.unwrap();
+        assert_eq!(vec![10, 20, 30], rx.recv_batch(100).await);
+    })
+}
