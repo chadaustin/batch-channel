@@ -91,3 +91,23 @@ fn recv_batch_returning_all() {
         assert_eq!(vec![10, 20, 30], rx.recv_batch(100).await);
     })
 }
+
+#[test]
+fn send_batch_blocks_as_needed() {
+    let mut pool = LocalPool::new();
+    let (tx, rx) = batch_channel::bounded(1);
+
+    pool.spawn(async move {
+        tx.send_iter([1, 2, 3, 4]).await.unwrap();
+    });
+
+    pool.block_on(async move {
+        assert_eq!(Some(1), rx.recv().await);
+        assert_eq!(Some(2), rx.recv().await);
+        assert_eq!(Some(3), rx.recv().await);
+        assert_eq!(Some(4), rx.recv().await);
+        assert_eq!(None, rx.recv().await);
+    });
+
+    pool.run();
+}

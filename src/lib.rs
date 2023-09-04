@@ -247,6 +247,17 @@ pub struct BoundedSender<T> {
     state: Arc<Mutex<State<T>>>,
 }
 
+impl<T> Drop for BoundedSender<T> {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap();
+        assert!(state.tx_count >= 1);
+        state.tx_count -= 1;
+        if state.tx_count == 0 {
+            wake_all_rx(state);
+        }
+    }
+}
+
 impl<T> BoundedSender<T> {
     /// Send a single value.
     ///
@@ -315,9 +326,6 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.sender.state.lock().unwrap();
-        if state.rx_count == 0 {
-            return Poll::Ready(Err(SendError(())));
-        }
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -334,6 +342,9 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                 // iterator, but that's unlikely. We probably sent a message in this loop.
                 wake_all_rx(state);
                 return Poll::Ready(Ok(()));
+            } else if state.rx_count == 0 {
+                // TODO: add a test for when receiver is dropped after iterator is drained
+                return Poll::Ready(Err(SendError(())));
             } else if state.queue.len() < state.target_capacity() {
                 state.queue.push_back(pi.next().unwrap());
             } else {
@@ -370,6 +381,7 @@ impl<T> Drop for Receiver<T> {
         state.rx_count -= 1;
         if state.rx_count == 0 {
             state.queue.clear();
+            wake_all_tx(state);
         }
     }
 }
