@@ -258,7 +258,7 @@ impl<T> Drop for BoundedSender<T> {
     }
 }
 
-impl<T> BoundedSender<T> {
+impl<T: 'static> BoundedSender<T> {
     /// Send a single value.
     ///
     /// Returns [SendError] if all receivers are dropped.
@@ -285,6 +285,24 @@ impl<T> BoundedSender<T> {
             sender: self,
             values: Some(values.into_iter().peekable()),
         }
+    }
+
+    /// Automatically accumulate sends into a buffer of size `batch`
+    /// and send when full.
+    pub async fn autobatch<'tx, C, F, R>(self, capacity: usize, f: C) -> Result<R, SendError<()>>
+    where
+        C: for<'a> (FnOnce(&'a mut BoundedBatchSender<T>) -> F + 'a),
+        F: Future<Output = Result<R, SendError<()>>>,
+    {
+        let mut tx = BoundedBatchSender {
+            phantom: core::marker::PhantomData::<&'tx ()>,
+            sender: self,
+            capacity,
+            buffer: Vec::with_capacity(capacity),
+        };
+        let r = f(&mut tx).await;
+        tx.drain().await?;
+        r
     }
 }
 
@@ -356,6 +374,31 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
 }
 
 impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
+
+// BoundedBatchSender
+
+pub struct BoundedBatchSender<'tx, T> {
+    phantom: core::marker::PhantomData<&'tx ()>,
+    sender: BoundedSender<T>,
+    capacity: usize,
+    buffer: Vec<T>,
+}
+
+impl<'tx, T> BoundedBatchSender<'tx, T> {
+    pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
+        if self.buffer.len() < self.capacity {
+            self.buffer.push(value);
+            Ok(())
+        } else {
+            self.drain().await
+        }
+    }
+
+    async fn drain(&mut self) -> Result<(), SendError<()>> {
+        _ = self.sender;
+        unimplemented!("drain buffer");
+    }
+}
 
 // Receiver
 
