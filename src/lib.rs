@@ -295,13 +295,12 @@ impl<T: 'static> BoundedSender<T> {
     /// limitations in Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
     ///
     /// TODO: add a feature that gates this only dependency on `futures` crate.
-    pub async fn autobatch<'tx, F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
+    pub async fn autobatch<F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
     where
         for<'a> F:
             (FnOnce(&'a mut BoundedBatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
     {
         let mut tx = BoundedBatchSender {
-            phantom: core::marker::PhantomData::<&'tx ()>,
             sender: self,
             capacity,
             buffer: Vec::with_capacity(capacity),
@@ -383,14 +382,13 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // BoundedBatchSender
 
-pub struct BoundedBatchSender<'tx, T: 'static> {
-    phantom: core::marker::PhantomData<&'tx ()>,
+pub struct BoundedBatchSender<T: 'static> {
     sender: BoundedSender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
 
-impl<'tx, T> BoundedBatchSender<'tx, T> {
+impl<T> BoundedBatchSender<T> {
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
         if self.buffer.len() == self.capacity {
             self.drain().await?;
