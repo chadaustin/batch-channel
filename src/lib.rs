@@ -390,10 +390,10 @@ pub struct BoundedBatchSender<T: 'static> {
 
 impl<T> BoundedBatchSender<T> {
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
+        self.buffer.push(value);
         if self.buffer.len() == self.capacity {
             self.drain().await?;
         }
-        self.buffer.push(value);
         Ok(())
     }
 

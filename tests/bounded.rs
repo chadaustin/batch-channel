@@ -143,13 +143,13 @@ fn autobatch_batches() {
     });
 
     pool.run_until_stalled();
-    assert_eq!("2", *state.lock().unwrap());
+    assert_eq!("1", *state.lock().unwrap());
     assert_eq!(Some(1), pool.run_until(rx.recv()));
-    assert_eq!("2", *state.lock().unwrap());
+    assert_eq!("1", *state.lock().unwrap());
     assert_eq!(Some(2), pool.run_until(rx.recv()));
-    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!("3", *state.lock().unwrap());
     assert_eq!(Some(3), pool.run_until(rx.recv()));
-    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!("3", *state.lock().unwrap());
     assert_eq!(Some(4), pool.run_until(rx.recv()));
     assert_eq!("4", *state.lock().unwrap());
     assert_eq!(None, pool.run_until(rx.recv()));
