@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("example.md")]
 
+use futures_core::future::BoxFuture;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
@@ -289,10 +290,15 @@ impl<T: 'static> BoundedSender<T> {
 
     /// Automatically accumulate sends into a buffer of size `batch`
     /// and send when full.
-    pub async fn autobatch<'tx, C, F, R>(self, capacity: usize, f: C) -> Result<R, SendError<()>>
+    ///
+    /// The callback's future must be boxed to work around [type system
+    /// limitations in Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
+    ///
+    /// TODO: add a feature that gates this only dependency on `futures` crate.
+    pub async fn autobatch<'tx, F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
     where
-        C: for<'a> (FnOnce(&'a mut BoundedBatchSender<T>) -> F + 'a),
-        F: Future<Output = Result<R, SendError<()>>>,
+        for<'a> F:
+            (FnOnce(&'a mut BoundedBatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
     {
         let mut tx = BoundedBatchSender {
             phantom: core::marker::PhantomData::<&'tx ()>,
@@ -300,9 +306,9 @@ impl<T: 'static> BoundedSender<T> {
             capacity,
             buffer: Vec::with_capacity(capacity),
         };
-        let r = f(&mut tx).await;
+        let r = f(&mut tx).await?;
         tx.drain().await?;
-        r
+        Ok(r)
     }
 }
 
@@ -377,7 +383,7 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // BoundedBatchSender
 
-pub struct BoundedBatchSender<'tx, T> {
+pub struct BoundedBatchSender<'tx, T: 'static> {
     phantom: core::marker::PhantomData<&'tx ()>,
     sender: BoundedSender<T>,
     capacity: usize,
@@ -386,17 +392,17 @@ pub struct BoundedBatchSender<'tx, T> {
 
 impl<'tx, T> BoundedBatchSender<'tx, T> {
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
-        if self.buffer.len() < self.capacity {
-            self.buffer.push(value);
-            Ok(())
-        } else {
-            self.drain().await
+        if self.buffer.len() == self.capacity {
+            self.drain().await?;
         }
+        self.buffer.push(value);
+        Ok(())
     }
 
     async fn drain(&mut self) -> Result<(), SendError<()>> {
-        _ = self.sender;
-        unimplemented!("drain buffer");
+        self.sender.send_iter(self.buffer.drain(..)).await?;
+        assert!(self.buffer.is_empty());
+        Ok(())
     }
 }
 

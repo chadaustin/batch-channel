@@ -163,6 +163,7 @@ dependencies = [
  "criterion",
  "crossbeam",
  "futures",
+ "futures-core",
  "tiny-bench",
 ]
 

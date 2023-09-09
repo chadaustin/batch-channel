@@ -1,8 +1,11 @@
 #![allow(non_snake_case)]
 
 use batch_channel::SendError;
+use futures::FutureExt;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 mod fixture;
 use fixture::*;
@@ -115,36 +118,39 @@ fn send_batch_blocks_as_needed() {
 #[test]
 fn autobatch_batches() {
     let mut pool = LocalPool::new();
-    let state = Rc::new(RefCell::new(""));
+    let state = Arc::new(Mutex::new(""));
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
     pool.spawn(async move {
-        tx.autobatch(2, move |tx| async move {
-            *inner.borrow_mut() = "0";
-            tx.send(1).await?;
-            *inner.borrow_mut() = "1";
-            tx.send(2).await?;
-            *inner.borrow_mut() = "2";
-            tx.send(3).await?;
-            *inner.borrow_mut() = "3";
-            tx.send(4).await?;
-            *inner.borrow_mut() = "4";
-            Ok(())
+        tx.autobatch(2, move |tx| {
+            async move {
+                *inner.lock().unwrap() = "0";
+                tx.send(1).await?;
+                *inner.lock().unwrap() = "1";
+                tx.send(2).await?;
+                *inner.lock().unwrap() = "2";
+                tx.send(3).await?;
+                *inner.lock().unwrap() = "3";
+                tx.send(4).await?;
+                *inner.lock().unwrap() = "4";
+                Ok(())
+            }
+            .boxed()
         })
         .await
         .unwrap()
     });
 
     pool.run_until_stalled();
-    assert_eq!("2", *state.borrow());
-    assert_eq!(Some(1), block_on(rx.recv()));
-    assert_eq!("2", *state.borrow());
-    assert_eq!(Some(2), block_on(rx.recv()));
-    assert_eq!("4", *state.borrow());
-    assert_eq!(Some(3), block_on(rx.recv()));
-    assert_eq!("4", *state.borrow());
-    assert_eq!(Some(4), block_on(rx.recv()));
-    assert_eq!("4", *state.borrow());
-    assert_eq!(None, block_on(rx.recv()));
+    assert_eq!("2", *state.lock().unwrap());
+    assert_eq!(Some(1), pool.run_until(rx.recv()));
+    assert_eq!("2", *state.lock().unwrap());
+    assert_eq!(Some(2), pool.run_until(rx.recv()));
+    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!(Some(3), pool.run_until(rx.recv()));
+    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!(Some(4), pool.run_until(rx.recv()));
+    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!(None, pool.run_until(rx.recv()));
 }
