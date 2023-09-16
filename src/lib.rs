@@ -292,8 +292,6 @@ impl<T: 'static> BoundedSender<T> {
     ///
     /// The callback's future must be boxed to work around [type system
     /// limitations in Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
-    ///
-    /// TODO: add a feature that gates this only dependency on `futures` crate.
     pub async fn autobatch<F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
     where
         for<'a> F:
@@ -381,6 +379,8 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // BoundedBatchSender
 
+/// The internal send handle used by [BoundedSender::autobatch].
+/// Builds a buffer of size `capacity` and flushes when it's full.
 pub struct BoundedBatchSender<T: 'static> {
     sender: BoundedSender<T>,
     capacity: usize,
@@ -388,6 +388,8 @@ pub struct BoundedBatchSender<T: 'static> {
 }
 
 impl<T> BoundedBatchSender<T> {
+    /// Adds a value to the internal buffer and flushes it into the
+    /// queue when the buffer fills.
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
         self.buffer.push(value);
         if self.buffer.len() == self.capacity {
