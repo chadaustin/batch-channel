@@ -272,9 +272,8 @@ impl<T: 'static> BoundedSender<T> {
 
     /// Send multiple values.
     ///
-    /// If all receivers are dropped, the values are returned in
-    /// [SendError] untouched. Either the entire batch is sent or none
-    /// of it is sent.
+    /// If all receivers are dropped, SendError is returned and unsent
+    /// values are dropped.
     pub fn send_iter<'a, I>(
         &'a self,
         values: I,
@@ -578,10 +577,10 @@ impl<T> Receiver<T> {
 
 // Constructors
 
-/// Allocates a new, bounded channel and returns the sender, receiver
+/// Allocates a bounded channel and returns the sender, receiver
 /// pair.
 ///
-/// Rust async is polling, so synchronous channels are not supported.
+/// Rust async is polling, so unbuffered channels are not supported.
 /// Therefore, a capacity of 0 is rounded up to 1.
 pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
     let capacity = capacity.max(1);
@@ -601,7 +600,7 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
     )
 }
 
-/// Allocates a new, unbounded channel and returns the sender,
+/// Allocates an unbounded channel and returns the sender,
 /// receiver pair.
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let state = Arc::new(Mutex::new(State {
