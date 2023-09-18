@@ -154,3 +154,35 @@ fn autobatch_batches() {
     assert_eq!("4", *state.lock().unwrap());
     assert_eq!(None, pool.run_until(rx.recv()));
 }
+
+#[test]
+fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
+    let mut pool = LocalPool::new();
+    let state = Arc::new(Mutex::new(""));
+
+    let (tx, rx) = batch_channel::bounded(1);
+    let inner = state.clone();
+    pool.spawn(tx.autobatch_or_cancel(2, move |tx| {
+        async move {
+            *inner.lock().unwrap() = "0";
+            tx.send(1).await?;
+            *inner.lock().unwrap() = "1";
+            tx.send(2).await?;
+            *inner.lock().unwrap() = "2";
+            tx.send(3).await?;
+            *inner.lock().unwrap() = "3";
+            tx.send(4).await?;
+            *inner.lock().unwrap() = "4";
+            Ok(())
+        }
+        .boxed()
+    }));
+
+    pool.run_until_stalled();
+    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!(Some(1), pool.run_until(rx.recv()));
+    assert_eq!("1", *state.lock().unwrap());
+    drop(rx);
+    pool.run_until_stalled();
+    assert_eq!("1", *state.lock().unwrap());
+}

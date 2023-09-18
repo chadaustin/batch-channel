@@ -306,6 +306,19 @@ impl<T: 'static> BoundedSender<T> {
         tx.drain().await?;
         Ok(r)
     }
+
+    /// Same as [autobatch] except that it immediately returns () when
+    /// `f` returns [SendError]. This is a convenience wrapper for the
+    /// common case that the future is passed to a spawn function and
+    /// the receiver being dropped (i.e. [SendError]) is considered a
+    /// clean cancellation.
+    pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
+    where
+        for<'a> F:
+            (FnOnce(&'a mut BoundedBatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
+    {
+        self.autobatch(capacity, f).await.unwrap_or(())
+    }
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
