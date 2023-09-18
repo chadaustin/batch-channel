@@ -186,3 +186,15 @@ fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
     pool.run_until_stalled();
     assert_eq!("1", *state.lock().unwrap());
 }
+
+#[test]
+fn clone_bounded_sender() {
+    let mut pool = LocalPool::new();
+    let (tx1, rx) = batch_channel::bounded::<()>(1);
+    let tx2 = tx1.clone();
+    drop(tx1);
+    let tx3 = tx2.clone();
+    drop(tx2);
+    drop(tx3);
+    assert_eq!(None, pool.run_until(rx.recv()));
+}

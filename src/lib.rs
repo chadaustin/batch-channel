@@ -243,20 +243,9 @@ impl<T> BatchSender<T> {
 // BoundedSender
 
 /// The sending half of a bounded channel.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BoundedSender<T> {
-    state: Arc<Mutex<State<T>>>,
-}
-
-impl<T> Drop for BoundedSender<T> {
-    fn drop(&mut self) {
-        let mut state = self.state.lock().unwrap();
-        assert!(state.tx_count >= 1);
-        state.tx_count -= 1;
-        if state.tx_count == 0 {
-            wake_all_rx(state);
-        }
-    }
+    sender: Sender<T>,
 }
 
 impl<T: 'static> BoundedSender<T> {
@@ -331,7 +320,7 @@ impl<'a, T> Future for Send<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.state.lock().unwrap();
+        let mut state = self.sender.sender.state.lock().unwrap();
         if state.rx_count == 0 {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
@@ -358,7 +347,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
     type Output = Result<(), SendError<()>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.state.lock().unwrap();
+        let mut state = self.sender.sender.state.lock().unwrap();
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -609,7 +598,9 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
     }));
     (
         BoundedSender {
-            state: state.clone(),
+            sender: Sender {
+                state: state.clone(),
+            },
         },
         Receiver { state },
     )
