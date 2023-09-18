@@ -268,3 +268,11 @@ fn batch_can_be_drained() {
     pool.run();
     assert_eq!(vec![1, 2, 3], *read_values.borrow());
 }
+
+#[test]
+fn sender_and_receiver_of_noncloneable_can_clone() {
+    struct NoClone;
+    let (tx, rx) = batch_channel::unbounded::<NoClone>();
+    _ = tx.clone();
+    _ = rx.clone();
+}

@@ -198,3 +198,11 @@ fn clone_bounded_sender() {
     drop(tx3);
     assert_eq!(None, pool.run_until(rx.recv()));
 }
+
+#[test]
+fn sender_and_receiver_of_noncloneable_can_clone() {
+    struct NoClone;
+    let (tx, rx) = batch_channel::bounded::<NoClone>(1);
+    _ = tx.clone();
+    _ = rx.clone();
+}

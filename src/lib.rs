@@ -243,9 +243,17 @@ impl<T> BatchSender<T> {
 // BoundedSender
 
 /// The sending half of a bounded channel.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BoundedSender<T> {
     sender: Sender<T>,
+}
+
+impl<T> Clone for BoundedSender<T> {
+    fn clone(&self) -> Self {
+        BoundedSender {
+            sender: self.sender.clone(),
+        }
+    }
 }
 
 impl<T: 'static> BoundedSender<T> {
