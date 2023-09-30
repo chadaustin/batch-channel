@@ -53,26 +53,31 @@ impl<T> State<T> {
     }
 }
 
+#[derive(Debug)]
+struct Core<T> {
+    state: Mutex<State<T>>,
+}
+
 // Sender
 
 /// The sending half of an unbounded channel.
 #[derive(Debug)]
 pub struct Sender<T> {
-    state: Arc<Mutex<State<T>>>,
+    core: Arc<Core<T>>,
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        self.state.lock().unwrap().tx_count += 1;
+        self.core.state.lock().unwrap().tx_count += 1;
         Sender {
-            state: self.state.clone(),
+            core: self.core.clone(),
         }
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.core.state.lock().unwrap();
         assert!(state.tx_count >= 1);
         state.tx_count -= 1;
         if state.tx_count == 0 {
@@ -101,7 +106,7 @@ impl<T> Sender<T> {
     ///
     /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.core.state.lock().unwrap();
         if state.rx_count == 0 {
             assert!(state.queue.is_empty());
             return Err(SendError(value));
@@ -126,7 +131,7 @@ impl<T> Sender<T> {
     where
         I: IntoIterator<Item = T>,
     {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.core.state.lock().unwrap();
         if state.rx_count == 0 {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
@@ -148,7 +153,7 @@ impl<T> Sender<T> {
     /// sends. The `values` vector is drained, and then returned with
     /// the same capacity it had.
     pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.core.state.lock().unwrap();
         if state.rx_count == 0 {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
@@ -328,7 +333,7 @@ impl<'a, T> Future for Send<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.sender.state.lock().unwrap();
+        let mut state = self.sender.sender.core.state.lock().unwrap();
         if state.rx_count == 0 {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
@@ -355,7 +360,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
     type Output = Result<(), SendError<()>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.sender.state.lock().unwrap();
+        let mut state = self.sender.sender.core.state.lock().unwrap();
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -420,21 +425,21 @@ impl<T> BoundedBatchSender<T> {
 /// The receiving half of a channel.
 #[derive(Debug)]
 pub struct Receiver<T> {
-    state: Arc<Mutex<State<T>>>,
+    core: Arc<Core<T>>,
 }
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        self.state.lock().unwrap().rx_count += 1;
+        self.core.state.lock().unwrap().rx_count += 1;
         Receiver {
-            state: self.state.clone(),
+            core: self.core.clone(),
         }
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.core.state.lock().unwrap();
         assert!(state.rx_count >= 1);
         state.rx_count -= 1;
         if state.rx_count == 0 {
@@ -455,7 +460,7 @@ impl<'a, T> Future for Recv<'a, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock().unwrap();
         match state.queue.pop_front() {
             Some(value) => {
                 wake_all_tx(state);
@@ -485,7 +490,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock().unwrap();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
@@ -517,7 +522,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock().unwrap();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
@@ -596,39 +601,38 @@ impl<T> Receiver<T> {
 /// Therefore, a capacity of 0 is rounded up to 1.
 pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
     let capacity = capacity.max(1);
-    let state = Arc::new(Mutex::new(State {
-        queue: VecDeque::new(),
-        capacity,
-        tx_count: 1,
-        rx_count: 1,
-        tx_wakers: Vec::new(),
-        rx_wakers: Vec::new(),
-    }));
+    let core = Core {
+        state: Mutex::new(State {
+            queue: VecDeque::new(),
+            capacity,
+            tx_count: 1,
+            rx_count: 1,
+            tx_wakers: Vec::new(),
+            rx_wakers: Vec::new(),
+        }),
+    };
+    let core = Arc::new(core);
     (
         BoundedSender {
-            sender: Sender {
-                state: state.clone(),
-            },
+            sender: Sender { core: core.clone() },
         },
-        Receiver { state },
+        Receiver { core },
     )
 }
 
 /// Allocates an unbounded channel and returns the sender,
 /// receiver pair.
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
-    let state = Arc::new(Mutex::new(State {
-        queue: VecDeque::new(),
-        capacity: UNBOUNDED_CAPACITY,
-        tx_count: 1,
-        rx_count: 1,
-        tx_wakers: Vec::new(),
-        rx_wakers: Vec::new(),
-    }));
-    (
-        Sender {
-            state: state.clone(),
-        },
-        Receiver { state },
-    )
+    let core = Core {
+        state: Mutex::new(State {
+            queue: VecDeque::new(),
+            capacity: UNBOUNDED_CAPACITY,
+            tx_count: 1,
+            rx_count: 1,
+            tx_wakers: Vec::new(),
+            rx_wakers: Vec::new(),
+        }),
+    };
+    let core = Arc::new(core);
+    (Sender { core: core.clone() }, Receiver { core })
 }
