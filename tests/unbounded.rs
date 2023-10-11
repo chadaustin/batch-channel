@@ -276,3 +276,37 @@ fn sender_and_receiver_of_noncloneable_can_clone() {
     _ = tx.clone();
     _ = rx.clone();
 }
+
+#[test]
+fn blocking_recv_stress_condvar() {
+    use std::sync::Arc;
+    use std::sync::Barrier;
+    use std::thread;
+
+    const N: usize = 100;
+    const I: usize = 20;
+    let mut handles = Vec::with_capacity(N * 2);
+    let barrier = Arc::new(Barrier::new(N * 2));
+    for _ in 0..N {
+        let tx_barrier = Arc::clone(&barrier);
+        let rx_barrier = Arc::clone(&barrier);
+        let (tx, rx) = batch_channel::unbounded();
+        handles.push(thread::spawn(move || {
+            tx_barrier.wait();
+            for i in 0..I {
+                tx.send(i).unwrap();
+            }
+        }));
+        handles.push(thread::spawn(move || {
+            rx_barrier.wait();
+            for i in 0..I {
+                assert_eq!(Some(i), rx.recv_blocking());
+            }
+            assert_eq!(None, rx.recv_blocking());
+        }));
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}

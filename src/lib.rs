@@ -9,8 +9,10 @@ use std::future::Future;
 use std::iter::Peekable;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::OnceLock;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
@@ -40,9 +42,27 @@ impl<T> State<T> {
 #[derive(Debug)]
 struct Core<T> {
     state: Mutex<State<T>>,
+    // OnceLock ensures Core is Sync and Arc<Core> is Send. But it is
+    // not strictly necessary, as these condition variables are only
+    // accessed while the lock is held. Alas, Rust does not allow
+    // Condvar to be stored under the Mutex.
+    not_empty: OnceLock<Condvar>,
 }
 
 impl<T> Core<T> {
+    /// Returns when there is a value or there are no values and all
+    /// senders are dropped.
+    fn block_until_not_empty(&self) -> MutexGuard<'_, State<T>> {
+        let state = self.state.lock().unwrap();
+        // Initialize the condvar while the lock is held. Thus, the
+        // caller can, while the lock is held, check whether the
+        // condvar must be notified.
+        let not_empty = self.not_empty.get_or_init(Default::default);
+        not_empty
+            .wait_while(state, |s| s.tx_count != 0 && s.queue.is_empty())
+            .unwrap()
+    }
+
     fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
         let wakers = std::mem::take(&mut state.tx_wakers);
         drop(state);
@@ -52,8 +72,13 @@ impl<T> Core<T> {
     }
 
     fn wake_all_rx(&self, mut state: MutexGuard<State<T>>) {
+        // The lock is held. Therefore, we know whether a Condvar must be notified or not.
+        let cvar = self.not_empty.get();
         let wakers = std::mem::take(&mut state.rx_wakers);
         drop(state);
+        if let Some(cvar) = cvar {
+            cvar.notify_all();
+        }
         for waker in wakers {
             waker.wake();
         }
@@ -544,6 +569,23 @@ impl<'a, T> Future for RecvVec<'a, T> {
 }
 
 impl<T> Receiver<T> {
+    /// Block waiting for a single value from the channel.
+    ///
+    /// Returns [None] if all [Sender]s are dropped.
+    pub fn recv_blocking(&self) -> Option<T> {
+        let mut state = self.core.block_until_not_empty();
+        match state.queue.pop_front() {
+            Some(value) => {
+                self.core.wake_all_tx(state);
+                Some(value)
+            }
+            None => {
+                assert_eq!(0, state.tx_count);
+                None
+            }
+        }
+    }
+
     /// Wait for a single value from the channel.
     ///
     /// Returns [None] if all [Sender]s are dropped.
@@ -612,6 +654,7 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
             tx_wakers: Vec::new(),
             rx_wakers: Vec::new(),
         }),
+        not_empty: OnceLock::new(),
     };
     let core = Arc::new(core);
     (
@@ -634,6 +677,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
             tx_wakers: Vec::new(),
             rx_wakers: Vec::new(),
         }),
+        not_empty: OnceLock::new(),
     };
     let core = Arc::new(core);
     (Sender { core: core.clone() }, Receiver { core })
