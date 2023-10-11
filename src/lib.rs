@@ -29,22 +29,6 @@ struct State<T> {
     rx_wakers: Vec<Waker>,
 }
 
-fn wake_all_tx<T>(mut state: MutexGuard<State<T>>) {
-    let wakers = std::mem::take(&mut state.tx_wakers);
-    drop(state);
-    for waker in wakers {
-        waker.wake();
-    }
-}
-
-fn wake_all_rx<T>(mut state: MutexGuard<State<T>>) {
-    let wakers = std::mem::take(&mut state.rx_wakers);
-    drop(state);
-    for waker in wakers {
-        waker.wake();
-    }
-}
-
 impl<T> State<T> {
     fn target_capacity(&self) -> usize {
         // TODO: We could offer an option to use queue.capacity
@@ -56,6 +40,24 @@ impl<T> State<T> {
 #[derive(Debug)]
 struct Core<T> {
     state: Mutex<State<T>>,
+}
+
+impl<T> Core<T> {
+    fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
+        let wakers = std::mem::take(&mut state.tx_wakers);
+        drop(state);
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+
+    fn wake_all_rx(&self, mut state: MutexGuard<State<T>>) {
+        let wakers = std::mem::take(&mut state.rx_wakers);
+        drop(state);
+        for waker in wakers {
+            waker.wake();
+        }
+    }
 }
 
 // Sender
@@ -81,7 +83,7 @@ impl<T> Drop for Sender<T> {
         assert!(state.tx_count >= 1);
         state.tx_count -= 1;
         if state.tx_count == 0 {
-            wake_all_rx(state);
+            self.core.wake_all_rx(state);
         }
     }
 }
@@ -117,7 +119,7 @@ impl<T> Sender<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all_rx(state);
+        self.core.wake_all_rx(state);
 
         Ok(())
     }
@@ -142,7 +144,7 @@ impl<T> Sender<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all_rx(state);
+        self.core.wake_all_rx(state);
 
         Ok(())
     }
@@ -164,7 +166,7 @@ impl<T> Sender<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        wake_all_rx(state);
+        self.core.wake_all_rx(state);
 
         Ok(values)
     }
@@ -339,7 +341,7 @@ impl<'a, T> Future for Send<'a, T> {
         }
         if state.queue.len() < state.target_capacity() {
             state.queue.push_back(self.as_mut().value.take().unwrap());
-            wake_all_rx(state);
+            self.sender.sender.core.wake_all_rx(state);
             Poll::Ready(Ok(()))
         } else {
             state.tx_wakers.push(cx.waker().clone());
@@ -375,7 +377,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             if pi.peek().is_none() {
                 // TODO: We could optimize the case that send_iter was called with an empty
                 // iterator, but that's unlikely. We probably sent a message in this loop.
-                wake_all_rx(state);
+                self.sender.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
             } else if state.rx_count == 0 {
                 // TODO: add a test for when receiver is dropped after iterator is drained
@@ -444,7 +446,7 @@ impl<T> Drop for Receiver<T> {
         state.rx_count -= 1;
         if state.rx_count == 0 {
             state.queue.clear();
-            wake_all_tx(state);
+            self.core.wake_all_tx(state);
         }
     }
 }
@@ -463,7 +465,7 @@ impl<'a, T> Future for Recv<'a, T> {
         let mut state = self.receiver.core.state.lock().unwrap();
         match state.queue.pop_front() {
             Some(value) => {
-                wake_all_tx(state);
+                self.receiver.core.wake_all_tx(state);
                 Poll::Ready(Some(value))
             }
             None => {
@@ -504,7 +506,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 
         let capacity = min(q_len, self.element_limit);
         let v = Vec::from_iter(q.drain(..capacity));
-        wake_all_tx(state);
+        self.receiver.core.wake_all_tx(state);
         Poll::Ready(v)
     }
 }
