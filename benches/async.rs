@@ -3,11 +3,8 @@ use async_trait::async_trait;
 use futures::executor::LocalPool;
 use futures::task::SpawnExt;
 use futures::StreamExt;
-use std::cmp::max;
 use std::fmt;
 use std::sync::mpsc::TryRecvError;
-use std::time::Duration;
-use std::time::Instant;
 
 trait UnboundedChannelName {
     const NAME: &'static str;
@@ -226,96 +223,54 @@ async fn receiver<UC: UnboundedChannel + Send>(mut rx: UC::Receiver<usize>, batc
     }
 }
 
-fn single_threaded_one_item_tx_first<UC>(iteration_count: usize, batch_size: usize) -> Duration
+#[divan::bench(
+    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel],
+    consts = [1, 10, 100],
+)]
+fn batch_size_tx_first<UC, const N: usize>(bencher: divan::Bencher)
 where
     UC: UnboundedChannel + Send + 'static,
 {
-    let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
-
-    let (tx, rx) = UC::new();
-
-    () = spawner
-        .spawn(sender::<UC>(tx, iteration_count, batch_size))
-        .unwrap();
-
-    () = spawner.spawn(receiver::<UC>(rx, batch_size)).unwrap();
-
-    let instant = Instant::now();
-    pool.run_until_stalled();
-
-    instant.elapsed()
+    let iteration_count = 100;
+    bencher
+        .counter(divan::counter::ItemsCount::new(N * iteration_count))
+        .with_inputs(|| {
+            let pool = LocalPool::new();
+            let spawner = pool.spawner();
+            let (tx, rx) = UC::new();
+            () = spawner.spawn(sender::<UC>(tx, iteration_count, N)).unwrap();
+            () = spawner.spawn(receiver::<UC>(rx, N)).unwrap();
+            pool
+        })
+        .bench_local_values(|mut pool| {
+            pool.run_until_stalled();
+        })
 }
 
-fn single_threaded_one_item_rx_first<UC>(iteration_count: usize, batch_size: usize) -> Duration
+#[divan::bench(
+    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel],
+    consts = [1, 10, 100],
+)]
+fn batch_size_rx_first<UC, const N: usize>(bencher: divan::Bencher)
 where
     UC: UnboundedChannel + Send + 'static,
 {
-    let mut pool = LocalPool::new();
-    let spawner = pool.spawner();
-
-    let (tx, rx) = UC::new();
-
-    () = spawner.spawn(receiver::<UC>(rx, batch_size)).unwrap();
-
-    () = spawner
-        .spawn(sender::<UC>(tx, iteration_count, batch_size))
-        .unwrap();
-
-    let instant = Instant::now();
-    pool.run_until_stalled();
-
-    instant.elapsed()
-}
-
-fn bench<Name, F>(name: Name, f: F)
-where
-    Name: fmt::Display,
-    F: FnOnce(usize) -> Duration,
-{
-    // TODO: disable dynamic frequency scaling
-    const N: u32 = 100000;
-    print!("{name}... ");
-    println!("{:?} per", f(N as usize) / N);
-}
-
-fn bench_batch_size<UC>(batch_size: usize)
-where
-    UC: UnboundedChannel + Send + 'static,
-{
-    bench(
-        format!(
-            "{:width$} tx first 1thr batch={}",
-            UC::NAME,
-            batch_size,
-            width = max_name_len(),
-        ),
-        |ic| single_threaded_one_item_tx_first::<UC>(ic, batch_size),
-    );
-    bench(
-        format!(
-            "{:width$} rx first 1thr batch={}",
-            UC::NAME,
-            batch_size,
-            width = max_name_len(),
-        ),
-        |ic| single_threaded_one_item_rx_first::<UC>(ic, batch_size),
-    );
-}
-
-fn max_name_len() -> usize {
-    max(
-        max(BatchChannel::NAME.len(), StdChannel::NAME.len()),
-        max(CrossbeamChannel::NAME.len(), FuturesChannel::NAME.len()),
-    )
+    let iteration_count = 100;
+    bencher
+        .counter(divan::counter::ItemsCount::new(N * iteration_count))
+        .with_inputs(|| {
+            let pool = LocalPool::new();
+            let spawner = pool.spawner();
+            let (tx, rx) = UC::new();
+            () = spawner.spawn(receiver::<UC>(rx, N)).unwrap();
+            () = spawner.spawn(sender::<UC>(tx, iteration_count, N)).unwrap();
+            pool
+        })
+        .bench_local_values(|mut pool| {
+            pool.run_until_stalled();
+        })
 }
 
 fn main() {
-    for batch in [1, 10, 100] {
-        bench_batch_size::<BatchChannel>(batch);
-        bench_batch_size::<StdChannel>(batch);
-        bench_batch_size::<CrossbeamChannel>(batch);
-        bench_batch_size::<FuturesChannel>(batch);
-        println!();
-    }
+    divan::main()
 }
