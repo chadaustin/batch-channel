@@ -595,6 +595,28 @@ impl<T> Receiver<T> {
 
     // TODO: try_recv
 
+    /// Block waiting for values from the channel.
+    ///
+    /// Up to `element_limit` values are returned if they're already
+    /// available. Otherwise, waits for any values to be available.
+    ///
+    /// Returns an empty [Vec] if all [Sender]s are dropped.
+    pub fn recv_batch_blocking(&self, element_limit: usize) -> Vec<T> {
+        let mut state = self.core.block_until_not_empty();
+
+        let q = &mut state.queue;
+        let q_len = q.len();
+        if q_len == 0 {
+            assert_eq!(0, state.tx_count);
+            return Vec::new();
+        }
+
+        let capacity = min(q_len, element_limit);
+        let v = Vec::from_iter(q.drain(..capacity));
+        self.core.wake_all_tx(state);
+        v
+    }
+
     /// Wait for up to `element_limit` values from the channel.
     ///
     /// Up to `element_limit` values are returned if they're already

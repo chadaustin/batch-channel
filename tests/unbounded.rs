@@ -310,3 +310,11 @@ fn blocking_recv_stress_condvar() {
         handle.join().unwrap();
     }
 }
+
+#[test]
+fn recv_batch_blocking() {
+    let (tx, rx) = batch_channel::unbounded();
+    tx.send(10).unwrap();
+    tx.send(20).unwrap();
+    assert_eq!(vec![10, 20], rx.recv_batch_blocking(4));
+}
