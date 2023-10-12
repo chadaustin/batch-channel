@@ -22,6 +22,7 @@ async-trait = "0.1"
 crossbeam = "0.8"
 divan = "0.1"
 futures = "0.3"
+kanal = "0.1.0-pre8"
 
 [[bench]]
 name = "async"

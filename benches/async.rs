@@ -6,12 +6,8 @@ use futures::StreamExt;
 use std::fmt;
 use std::sync::mpsc::TryRecvError;
 
-trait UnboundedChannelName {
-    const NAME: &'static str;
-}
-
 #[async_trait]
-trait UnboundedChannel: UnboundedChannelName {
+trait UnboundedChannel {
     type Sender<T: Send + 'static>: Send + 'static;
     type Receiver<T: Send + 'static>: Send + 'static;
 
@@ -52,10 +48,6 @@ trait UnboundedChannel: UnboundedChannelName {
 
 struct BatchChannel;
 
-impl UnboundedChannelName for BatchChannel {
-    const NAME: &'static str = "batch-channel";
-}
-
 #[async_trait]
 impl UnboundedChannel for BatchChannel {
     type Sender<T: Send + 'static> = batch_channel::Sender<T>;
@@ -89,10 +81,6 @@ impl UnboundedChannel for BatchChannel {
 
 struct StdChannel;
 
-impl UnboundedChannelName for StdChannel {
-    const NAME: &'static str = "std::sync::mpsc";
-}
-
 #[async_trait]
 impl UnboundedChannel for StdChannel {
     type Sender<T: Send + 'static> = std::sync::mpsc::Sender<T>;
@@ -123,10 +111,6 @@ impl UnboundedChannel for StdChannel {
 }
 
 struct CrossbeamChannel;
-
-impl UnboundedChannelName for CrossbeamChannel {
-    const NAME: &'static str = "crossbeam::channel";
-}
 
 #[async_trait]
 impl UnboundedChannel for CrossbeamChannel {
@@ -159,10 +143,6 @@ impl UnboundedChannel for CrossbeamChannel {
 
 struct FuturesChannel;
 
-impl UnboundedChannelName for FuturesChannel {
-    const NAME: &'static str = "futures::channel::mpsc";
-}
-
 #[async_trait]
 impl UnboundedChannel for FuturesChannel {
     type Sender<T: Send + 'static> = futures::channel::mpsc::UnboundedSender<T>;
@@ -179,6 +159,29 @@ impl UnboundedChannel for FuturesChannel {
     }
     async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.next().await
+    }
+}
+
+struct KanalChannel;
+
+#[async_trait]
+impl UnboundedChannel for KanalChannel {
+    type Sender<T: Send + 'static> = kanal::Sender<T>;
+    type Receiver<T: Send + 'static> = kanal::AsyncReceiver<T>;
+
+    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+        let (tx, rx) = kanal::unbounded();
+        let rx = rx.to_async();
+        (tx, rx)
+    }
+    fn send<T: fmt::Debug + Send + Sync + 'static>(
+        tx: &Self::Sender<T>,
+        value: T,
+    ) -> anyhow::Result<()> {
+        Ok(tx.send(value)?)
+    }
+    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+        rx.recv().await.ok()
     }
 }
 
@@ -224,7 +227,7 @@ async fn receiver<UC: UnboundedChannel + Send>(mut rx: UC::Receiver<usize>, batc
 }
 
 #[divan::bench(
-    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel],
+    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel, KanalChannel],
     consts = [1, 10, 100],
 )]
 fn batch_size_tx_first<UC, const N: usize>(bencher: divan::Bencher)
@@ -248,7 +251,7 @@ where
 }
 
 #[divan::bench(
-    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel],
+    types = [BatchChannel, StdChannel, CrossbeamChannel, FuturesChannel, KanalChannel],
     consts = [1, 10, 100],
 )]
 fn batch_size_rx_first<UC, const N: usize>(bencher: divan::Bencher)
