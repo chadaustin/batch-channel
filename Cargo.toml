@@ -21,8 +21,8 @@ async-std = "1"
 async-trait = "0.1"
 criterion = "0.5"
 crossbeam = "0.8"
+divan = "0.1"
 futures = "0.3"
-tiny-bench = "0.3"
 
 [[bench]]
 name = "async"
