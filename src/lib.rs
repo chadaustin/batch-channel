@@ -336,11 +336,11 @@ impl<T: 'static> BoundedSender<T> {
         Ok(r)
     }
 
-    /// Same as [autobatch] except that it immediately returns () when
-    /// `f` returns [SendError]. This is a convenience wrapper for the
-    /// common case that the future is passed to a spawn function and
-    /// the receiver being dropped (i.e. [SendError]) is considered a
-    /// clean cancellation.
+    /// Same as [BoundedSender::autobatch] except that it immediately
+    /// returns () when `f` returns [SendError]. This is a convenience
+    /// wrapper for the common case that the future is passed to a
+    /// spawn function and the receiver being dropped (i.e.
+    /// [SendError]) is considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
         for<'a> F:
