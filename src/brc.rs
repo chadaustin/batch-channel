@@ -28,7 +28,10 @@ impl<T: BrcNotify> Drop for Btx<T> {
         // TODO: performance opportunity: if load acquire is 1, no decrement is necessary
         let inner = unsafe { self.ptr.as_ref() };
         if 1 == inner.tx_count.fetch_sub(1, Ordering::AcqRel) {
-            inner.data.on_tx_drop()
+            inner.data.on_tx_drop();
+            if 0 == inner.rx_count.load(Ordering::Acquire) {
+                drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
+            }
         }
     }
 }
@@ -65,7 +68,10 @@ impl<T: BrcNotify> Drop for Brx<T> {
         // TODO: performance opportunity: if load acquire is 1, no decrement is necessary
         let inner = unsafe { self.ptr.as_ref() };
         if 1 == inner.rx_count.fetch_sub(1, Ordering::AcqRel) {
-            inner.data.on_rx_drop()
+            inner.data.on_rx_drop();
+            if 0 == inner.tx_count.load(Ordering::Acquire) {
+                drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
+            }
         }
     }
 }
