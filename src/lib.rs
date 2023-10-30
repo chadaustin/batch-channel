@@ -17,6 +17,8 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
+mod brc;
+
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
 // TODO: we could replace Arc with Box and rely on atomic tx_count and
