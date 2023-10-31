@@ -8,7 +8,6 @@ use std::fmt;
 use std::future::Future;
 use std::iter::Peekable;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -21,14 +20,12 @@ mod brc;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
-// TODO: we could replace Arc with Box and rely on atomic tx_count and
-// rx_count.
 #[derive(Debug)]
 struct State<T> {
     queue: VecDeque<T>,
     capacity: usize,
-    tx_count: usize,
-    rx_count: usize,
+    tx_dropped: bool,
+    rx_dropped: bool,
     tx_wakers: Vec<Waker>,
     rx_wakers: Vec<Waker>,
 }
@@ -61,7 +58,7 @@ impl<T> Core<T> {
         // condvar must be notified.
         let not_empty = self.not_empty.get_or_init(Default::default);
         not_empty
-            .wait_while(state, |s| s.tx_count != 0 && s.queue.is_empty())
+            .wait_while(state, |s| !s.tx_dropped && s.queue.is_empty())
             .unwrap()
     }
 
@@ -87,31 +84,31 @@ impl<T> Core<T> {
     }
 }
 
+impl<T> brc::BrcNotify for Core<T> {
+    fn on_tx_drop(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.tx_dropped = true;
+        self.wake_all_rx(state);
+    }
+    fn on_rx_drop(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.rx_dropped = true;
+        self.wake_all_tx(state);
+    }
+}
+
 // Sender
 
 /// The sending half of an unbounded channel.
 #[derive(Debug)]
 pub struct Sender<T> {
-    core: Arc<Core<T>>,
+    core: brc::Btx<Core<T>>,
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        self.core.state.lock().unwrap().tx_count += 1;
-        Sender {
-            core: self.core.clone(),
-        }
-    }
-}
-
-impl<T> Drop for Sender<T> {
-    fn drop(&mut self) {
-        let mut state = self.core.state.lock().unwrap();
-        assert!(state.tx_count >= 1);
-        state.tx_count -= 1;
-        if state.tx_count == 0 {
-            self.core.wake_all_rx(state);
-        }
+        let core = self.core.clone();
+        Self { core }
     }
 }
 
@@ -136,7 +133,7 @@ impl<T> Sender<T> {
     /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_count == 0 {
+        if state.rx_dropped {
             assert!(state.queue.is_empty());
             return Err(SendError(value));
         }
@@ -161,7 +158,7 @@ impl<T> Sender<T> {
         I: IntoIterator<Item = T>,
     {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_count == 0 {
+        if state.rx_dropped {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
         }
@@ -183,7 +180,7 @@ impl<T> Sender<T> {
     /// the same capacity it had.
     pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_count == 0 {
+        if state.rx_dropped {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
         }
@@ -284,9 +281,8 @@ pub struct BoundedSender<T> {
 
 impl<T> Clone for BoundedSender<T> {
     fn clone(&self) -> Self {
-        BoundedSender {
-            sender: self.sender.clone(),
-        }
+        let sender = self.sender.clone();
+        Self { sender }
     }
 }
 
@@ -363,7 +359,7 @@ impl<'a, T> Future for Send<'a, T> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.sender.sender.core.state.lock().unwrap();
-        if state.rx_count == 0 {
+        if state.rx_dropped {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
         if state.queue.len() < state.target_capacity() {
@@ -406,7 +402,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                 // iterator, but that's unlikely. We probably sent a message in this loop.
                 self.sender.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
-            } else if state.rx_count == 0 {
+            } else if state.rx_dropped {
                 // TODO: add a test for when receiver is dropped after iterator is drained
                 return Poll::Ready(Err(SendError(())));
             } else if state.queue.len() < state.target_capacity() {
@@ -454,27 +450,13 @@ impl<T> BoundedBatchSender<T> {
 /// The receiving half of a channel.
 #[derive(Debug)]
 pub struct Receiver<T> {
-    core: Arc<Core<T>>,
+    core: brc::Brx<Core<T>>,
 }
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        self.core.state.lock().unwrap().rx_count += 1;
-        Receiver {
-            core: self.core.clone(),
-        }
-    }
-}
-
-impl<T> Drop for Receiver<T> {
-    fn drop(&mut self) {
-        let mut state = self.core.state.lock().unwrap();
-        assert!(state.rx_count >= 1);
-        state.rx_count -= 1;
-        if state.rx_count == 0 {
-            state.queue.clear();
-            self.core.wake_all_tx(state);
-        }
+        let core = self.core.clone();
+        Self { core }
     }
 }
 
@@ -496,7 +478,7 @@ impl<'a, T> Future for Recv<'a, T> {
                 Poll::Ready(Some(value))
             }
             None => {
-                if state.tx_count == 0 {
+                if state.tx_dropped {
                     Poll::Ready(None)
                 } else {
                     state.rx_wakers.push(cx.waker().clone());
@@ -523,7 +505,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            if state.tx_count == 0 {
+            if state.tx_dropped {
                 return Poll::Ready(Vec::new());
             } else {
                 state.rx_wakers.push(cx.waker().clone());
@@ -555,7 +537,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            if state.tx_count == 0 {
+            if state.tx_dropped {
                 assert!(self.vec.is_empty());
                 return Poll::Ready(());
             } else {
@@ -582,7 +564,7 @@ impl<T> Receiver<T> {
                 Some(value)
             }
             None => {
-                assert_eq!(0, state.tx_count);
+                assert!(state.tx_dropped);
                 None
             }
         }
@@ -609,7 +591,7 @@ impl<T> Receiver<T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            assert_eq!(0, state.tx_count);
+            assert!(state.tx_dropped);
             return Vec::new();
         }
 
@@ -673,20 +655,16 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
         state: Mutex::new(State {
             queue: VecDeque::new(),
             capacity,
-            tx_count: 1,
-            rx_count: 1,
+            tx_dropped: false,
+            rx_dropped: false,
             tx_wakers: Vec::new(),
             rx_wakers: Vec::new(),
         }),
         not_empty: OnceLock::new(),
     };
-    let core = Arc::new(core);
-    (
-        BoundedSender {
-            sender: Sender { core: core.clone() },
-        },
-        Receiver { core },
-    )
+    let (core_tx, core_rx) = brc::new(core);
+    let sender = Sender { core: core_tx };
+    (BoundedSender { sender }, Receiver { core: core_rx })
 }
 
 /// Allocates an unbounded channel and returns the sender,
@@ -696,13 +674,14 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         state: Mutex::new(State {
             queue: VecDeque::new(),
             capacity: UNBOUNDED_CAPACITY,
-            tx_count: 1,
-            rx_count: 1,
+            tx_dropped: false,
+            rx_dropped: false,
             tx_wakers: Vec::new(),
             rx_wakers: Vec::new(),
         }),
         not_empty: OnceLock::new(),
     };
-    let core = Arc::new(core);
-    (Sender { core: core.clone() }, Receiver { core })
+    let (core_tx, core_rx) = brc::new(core);
+
+    (Sender { core: core_tx }, Receiver { core: core_rx })
 }

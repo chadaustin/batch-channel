@@ -4,18 +4,24 @@ use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
-trait BrcNotify {
+pub(crate) trait BrcNotify {
     fn on_tx_drop(&self) {}
     fn on_rx_drop(&self) {}
 }
 
+const TX_INC: usize = 2;
+const RX_INC: usize = 1;
+
 struct BrcInner<T> {
+    // To avoid races between Btx and Brx Drop implementations, the
+    // bottom bit of tx_count is set by the deallocating thread.
     tx_count: AtomicUsize,
     rx_count: AtomicUsize,
     data: T,
 }
 
-struct Btx<T: BrcNotify> {
+#[derive(Debug)]
+pub(crate) struct Btx<T: BrcNotify> {
     ptr: NonNull<BrcInner<T>>,
     phantom: PhantomData<BrcInner<T>>,
 }
@@ -27,9 +33,12 @@ impl<T: BrcNotify> Drop for Btx<T> {
     fn drop(&mut self) {
         // TODO: performance opportunity: if load acquire is 1, no decrement is necessary
         let inner = unsafe { self.ptr.as_ref() };
-        if 1 == inner.tx_count.fetch_sub(1, Ordering::AcqRel) {
+        if TX_INC == inner.tx_count.fetch_sub(TX_INC, Ordering::AcqRel) {
             inner.data.on_tx_drop();
             if 0 == inner.rx_count.load(Ordering::Acquire) {
+                // Both reference counts are observed zero here. But
+                // we could be racing with Brx::drop. Use the low bit
+                // of tx_count to decide who drops.
                 drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
             }
         }
@@ -39,7 +48,7 @@ impl<T: BrcNotify> Drop for Btx<T> {
 impl<T: BrcNotify> Clone for Btx<T> {
     fn clone(&self) -> Self {
         let inner = unsafe { self.ptr.as_ref() };
-        inner.tx_count.fetch_add(1, Ordering::Relaxed);
+        inner.tx_count.fetch_add(TX_INC, Ordering::Relaxed);
         Btx {
             ptr: self.ptr,
             phantom: self.phantom,
@@ -55,7 +64,8 @@ impl<T: BrcNotify> Deref for Btx<T> {
     }
 }
 
-struct Brx<T: BrcNotify> {
+#[derive(Debug)]
+pub(crate) struct Brx<T: BrcNotify> {
     ptr: NonNull<BrcInner<T>>,
     phantom: PhantomData<BrcInner<T>>,
 }
@@ -67,7 +77,7 @@ impl<T: BrcNotify> Drop for Brx<T> {
     fn drop(&mut self) {
         // TODO: performance opportunity: if load acquire is 1, no decrement is necessary
         let inner = unsafe { self.ptr.as_ref() };
-        if 1 == inner.rx_count.fetch_sub(1, Ordering::AcqRel) {
+        if 1 == inner.rx_count.fetch_sub(RX_INC, Ordering::AcqRel) {
             inner.data.on_rx_drop();
             if 0 == inner.tx_count.load(Ordering::Acquire) {
                 drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
@@ -95,10 +105,10 @@ impl<T: BrcNotify> Deref for Brx<T> {
     }
 }
 
-fn new<T: BrcNotify>(data: T) -> (Btx<T>, Brx<T>) {
+pub(crate) fn new<T: BrcNotify>(data: T) -> (Btx<T>, Brx<T>) {
     let x = Box::new(BrcInner {
-        tx_count: AtomicUsize::new(1),
-        rx_count: AtomicUsize::new(1),
+        tx_count: AtomicUsize::new(TX_INC),
+        rx_count: AtomicUsize::new(RX_INC),
         data,
     });
     let r = Box::leak(x);
