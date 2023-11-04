@@ -16,8 +16,6 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
-mod brc;
-
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
 #[derive(Debug)]
@@ -84,13 +82,13 @@ impl<T> Core<T> {
     }
 }
 
-impl<T> brc::BrcNotify for Core<T> {
-    fn on_tx_drop(&self) {
+impl<T> splitrc::Notify for Core<T> {
+    fn last_tx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
         state.tx_dropped = true;
         self.wake_all_rx(state);
     }
-    fn on_rx_drop(&self) {
+    fn last_rx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
         state.rx_dropped = true;
         self.wake_all_tx(state);
@@ -102,7 +100,7 @@ impl<T> brc::BrcNotify for Core<T> {
 /// The sending half of an unbounded channel.
 #[derive(Debug)]
 pub struct Sender<T> {
-    core: brc::Btx<Core<T>>,
+    core: splitrc::Tx<Core<T>>,
 }
 
 impl<T> Clone for Sender<T> {
@@ -450,7 +448,7 @@ impl<T> BoundedBatchSender<T> {
 /// The receiving half of a channel.
 #[derive(Debug)]
 pub struct Receiver<T> {
-    core: brc::Brx<Core<T>>,
+    core: splitrc::Rx<Core<T>>,
 }
 
 impl<T> Clone for Receiver<T> {
@@ -662,7 +660,7 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
         }),
         not_empty: OnceLock::new(),
     };
-    let (core_tx, core_rx) = brc::new(core);
+    let (core_tx, core_rx) = splitrc::new(core);
     let sender = Sender { core: core_tx };
     (BoundedSender { sender }, Receiver { core: core_rx })
 }
@@ -681,7 +679,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         }),
         not_empty: OnceLock::new(),
     };
-    let (core_tx, core_rx) = brc::new(core);
+    let (core_tx, core_rx) = splitrc::new(core);
 
     (Sender { core: core_tx }, Receiver { core: core_rx })
 }
