@@ -5,4 +5,5 @@ cd "${BASH_SOURCE%/*}"/..
 cargo check --all-targets
 cargo test
 cargo bench
+cargo doc
 

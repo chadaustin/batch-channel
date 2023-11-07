@@ -334,7 +334,7 @@ impl<T: 'static> Sender<T> {
         Ok(r)
     }
 
-    /// Same as [BoundedSender::autobatch] except that it immediately
+    /// Same as [Sender::autobatch] except that it immediately
     /// returns () when `f` returns [SendError]. This is a convenience
     /// wrapper for the common case that the future is passed to a
     /// spawn function and the receiver being dropped (i.e.
@@ -419,7 +419,7 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // BoundedBatchSender
 
-/// The internal send handle used by [BoundedSender::autobatch].
+/// The internal send handle used by [Sender::autobatch].
 /// Builds a buffer of size `capacity` and flushes when it's full.
 pub struct BoundedBatchSender<T: 'static> {
     sender: Sender<T>,
