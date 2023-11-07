@@ -123,8 +123,7 @@ pub struct SyncSender<T> {
 
 impl<T> Clone for SyncSender<T> {
     fn clone(&self) -> Self {
-        let core = self.core.clone();
-        Self { core }
+        Self { core: self.core.clone() }
     }
 }
 
@@ -278,13 +277,12 @@ impl<T> BatchSender<T> {
 /// The sending half of a bounded channel.
 #[derive(Debug)]
 pub struct Sender<T> {
-    sender: SyncSender<T>,
+    core: splitrc::Tx<Core<T>>,
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let sender = self.sender.clone();
-        Self { sender }
+        Self { core: self.core.clone() }
     }
 }
 
@@ -360,13 +358,13 @@ impl<'a, T> Future for Send<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.sender.core.state.lock().unwrap();
+        let mut state = self.sender.core.state.lock().unwrap();
         if state.rx_dropped {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
         if state.queue.len() < state.target_capacity() {
             state.queue.push_back(self.as_mut().value.take().unwrap());
-            self.sender.sender.core.wake_all_rx(state);
+            self.sender.core.wake_all_rx(state);
             Poll::Ready(Ok(()))
         } else {
             state.tx_wakers.push(cx.waker().clone());
@@ -387,7 +385,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
     type Output = Result<(), SendError<()>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.sender.core.state.lock().unwrap();
+        let mut state = self.sender.core.state.lock().unwrap();
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -402,7 +400,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             if pi.peek().is_none() {
                 // TODO: We could optimize the case that send_iter was called with an empty
                 // iterator, but that's unlikely. We probably sent a message in this loop.
-                self.sender.sender.core.wake_all_rx(state);
+                self.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
             } else if state.rx_dropped {
                 // TODO: add a test for when receiver is dropped after iterator is drained
@@ -457,8 +455,7 @@ pub struct Receiver<T> {
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        let core = self.core.clone();
-        Self { core }
+        Self { core: self.core.clone() }
     }
 }
 
@@ -665,8 +662,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
-    let sender = SyncSender { core: core_tx };
-    (Sender { sender }, Receiver { core: core_rx })
+    (Sender { core: core_tx }, Receiver { core: core_rx })
 }
 
 /// Allocates an unbounded channel and returns the sender,

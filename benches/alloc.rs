@@ -1,7 +1,7 @@
 use divan::Bencher;
 
 #[divan::bench]
-fn alloc_unbounded() -> (batch_channel::Sender<u8>, batch_channel::Receiver<u8>) {
+fn alloc_unbounded() -> (batch_channel::SyncSender<u8>, batch_channel::Receiver<u8>) {
     batch_channel::unbounded()
 }
 

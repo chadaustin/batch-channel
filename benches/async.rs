@@ -50,7 +50,7 @@ struct BatchChannel;
 
 #[async_trait]
 impl UnboundedChannel for BatchChannel {
-    type Sender<T: Send + 'static> = batch_channel::Sender<T>;
+    type Sender<T: Send + 'static> = batch_channel::SyncSender<T>;
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
     fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
