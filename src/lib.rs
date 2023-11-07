@@ -88,6 +88,7 @@ impl<T> splitrc::Notify for Core<T> {
         state.tx_dropped = true;
         self.wake_all_rx(state);
     }
+
     fn last_rx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
         state.rx_dropped = true;
@@ -95,20 +96,7 @@ impl<T> splitrc::Notify for Core<T> {
     }
 }
 
-// Sender
-
-/// The sending half of an unbounded channel.
-#[derive(Debug)]
-pub struct Sender<T> {
-    core: splitrc::Tx<Core<T>>,
-}
-
-impl<T> Clone for Sender<T> {
-    fn clone(&self) -> Self {
-        let core = self.core.clone();
-        Self { core }
-    }
-}
+// SendError
 
 /// An error returned from [Sender::send] when all [Receiver]s are
 /// dropped.
@@ -125,7 +113,22 @@ impl<T> fmt::Display for SendError<T> {
 
 impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
-impl<T> Sender<T> {
+// Sender
+
+/// The sending half of an channel.
+#[derive(Debug)]
+pub struct SyncSender<T> {
+    core: splitrc::Tx<Core<T>>,
+}
+
+impl<T> Clone for SyncSender<T> {
+    fn clone(&self) -> Self {
+        let core = self.core.clone();
+        Self { core }
+    }
+}
+
+impl<T> SyncSender<T> {
     /// Send a single value.
     ///
     /// Returns [SendError] if all receivers are dropped.
@@ -215,7 +218,7 @@ impl<T> Sender<T> {
 /// Any unsent values are sent upon drop.
 #[derive(Debug)]
 pub struct BatchSender<T> {
-    sender: Sender<T>,
+    sender: SyncSender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
@@ -223,6 +226,7 @@ pub struct BatchSender<T> {
 /// Sends remaining values.
 impl<T> Drop for BatchSender<T> {
     fn drop(&mut self) {
+        // TODO: How should be handle BatchSender for bounded channels?
         if self.buffer.is_empty() {
             return;
         }
@@ -274,7 +278,7 @@ impl<T> BatchSender<T> {
 /// The sending half of a bounded channel.
 #[derive(Debug)]
 pub struct BoundedSender<T> {
-    sender: Sender<T>,
+    sender: SyncSender<T>,
 }
 
 impl<T> Clone for BoundedSender<T> {
@@ -661,13 +665,13 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
-    let sender = Sender { core: core_tx };
+    let sender = SyncSender { core: core_tx };
     (BoundedSender { sender }, Receiver { core: core_rx })
 }
 
 /// Allocates an unbounded channel and returns the sender,
 /// receiver pair.
-pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
+pub fn unbounded<T>() -> (SyncSender<T>, Receiver<T>) {
     let core = Core {
         state: Mutex::new(State {
             queue: VecDeque::new(),
@@ -680,6 +684,5 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
-
-    (Sender { core: core_tx }, Receiver { core: core_rx })
+    (SyncSender { core: core_tx }, Receiver { core: core_rx })
 }
