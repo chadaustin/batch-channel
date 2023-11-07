@@ -274,7 +274,7 @@ impl<T> SyncBatchSender<T> {
     }
 }
 
-// BoundedSender
+// Sender
 
 /// The sending half of a bounded channel.
 #[derive(Debug)]
@@ -325,10 +325,9 @@ impl<T: 'static> Sender<T> {
     /// limitations in Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
     pub async fn autobatch<F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
     where
-        for<'a> F:
-            (FnOnce(&'a mut BoundedBatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
+        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
     {
-        let mut tx = BoundedBatchSender {
+        let mut tx = BatchSender {
             sender: self,
             capacity,
             buffer: Vec::with_capacity(capacity),
@@ -345,8 +344,7 @@ impl<T: 'static> Sender<T> {
     /// [SendError]) is considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
-        for<'a> F:
-            (FnOnce(&'a mut BoundedBatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
+        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
     {
         self.autobatch(capacity, f).await.unwrap_or(())
     }
@@ -421,17 +419,17 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
 
 impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
-// BoundedBatchSender
+// BatchSender
 
 /// The internal send handle used by [Sender::autobatch].
 /// Builds a buffer of size `capacity` and flushes when it's full.
-pub struct BoundedBatchSender<T: 'static> {
+pub struct BatchSender<T: 'static> {
     sender: Sender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
 
-impl<T> BoundedBatchSender<T> {
+impl<T> BatchSender<T> {
     /// Adds a value to the internal buffer and flushes it into the
     /// queue when the buffer fills.
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
