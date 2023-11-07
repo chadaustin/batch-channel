@@ -277,18 +277,18 @@ impl<T> BatchSender<T> {
 
 /// The sending half of a bounded channel.
 #[derive(Debug)]
-pub struct BoundedSender<T> {
+pub struct Sender<T> {
     sender: SyncSender<T>,
 }
 
-impl<T> Clone for BoundedSender<T> {
+impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
         let sender = self.sender.clone();
         Self { sender }
     }
 }
 
-impl<T: 'static> BoundedSender<T> {
+impl<T: 'static> Sender<T> {
     /// Send a single value.
     ///
     /// Returns [SendError] if all receivers are dropped.
@@ -352,7 +352,7 @@ impl<T: 'static> BoundedSender<T> {
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct Send<'a, T> {
-    sender: &'a BoundedSender<T>,
+    sender: &'a Sender<T>,
     value: Option<T>,
 }
 
@@ -379,7 +379,7 @@ impl<'a, T> Unpin for Send<'a, T> {}
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct SendIter<'a, T, I: Iterator<Item = T>> {
-    sender: &'a BoundedSender<T>,
+    sender: &'a Sender<T>,
     values: Option<Peekable<I>>,
 }
 
@@ -424,7 +424,7 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 /// The internal send handle used by [BoundedSender::autobatch].
 /// Builds a buffer of size `capacity` and flushes when it's full.
 pub struct BoundedBatchSender<T: 'static> {
-    sender: BoundedSender<T>,
+    sender: Sender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
@@ -651,7 +651,7 @@ impl<T> Receiver<T> {
 ///
 /// Rust async is polling, so unbuffered channels are not supported.
 /// Therefore, a capacity of 0 is rounded up to 1.
-pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
+pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let capacity = capacity.max(1);
     let core = Core {
         state: Mutex::new(State {
@@ -666,7 +666,7 @@ pub fn bounded<T>(capacity: usize) -> (BoundedSender<T>, Receiver<T>) {
     };
     let (core_tx, core_rx) = splitrc::new(core);
     let sender = SyncSender { core: core_tx };
-    (BoundedSender { sender }, Receiver { core: core_rx })
+    (Sender { sender }, Receiver { core: core_rx })
 }
 
 /// Allocates an unbounded channel and returns the sender,
