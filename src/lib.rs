@@ -123,7 +123,9 @@ pub struct SyncSender<T> {
 
 impl<T> Clone for SyncSender<T> {
     fn clone(&self) -> Self {
-        Self { core: self.core.clone() }
+        Self {
+            core: self.core.clone(),
+        }
     }
 }
 
@@ -195,14 +197,14 @@ impl<T> SyncSender<T> {
         Ok(values)
     }
 
-    /// Converts this [Sender] into a [BatchSender] with the specified
+    /// Converts this into a [SyncBatchSender] with the specified
     /// capacity.
     ///
-    /// [BatchSender] manages a single allocation containing
+    /// [SyncBatchSender] manages a single allocation containing
     /// `capacity` elements and automatically sends batches as it
     /// fills.
-    pub fn batch(self, capacity: usize) -> BatchSender<T> {
-        BatchSender {
+    pub fn batch(self, capacity: usize) -> SyncBatchSender<T> {
+        SyncBatchSender {
             sender: self,
             capacity,
             buffer: Vec::with_capacity(capacity),
@@ -216,14 +218,14 @@ impl<T> SyncSender<T> {
 ///
 /// Any unsent values are sent upon drop.
 #[derive(Debug)]
-pub struct BatchSender<T> {
+pub struct SyncBatchSender<T> {
     sender: SyncSender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
 
 /// Sends remaining values.
-impl<T> Drop for BatchSender<T> {
+impl<T> Drop for SyncBatchSender<T> {
     fn drop(&mut self) {
         // TODO: How should be handle BatchSender for bounded channels?
         if self.buffer.is_empty() {
@@ -235,7 +237,7 @@ impl<T> Drop for BatchSender<T> {
     }
 }
 
-impl<T> BatchSender<T> {
+impl<T> SyncBatchSender<T> {
     /// Buffers a single value to be sent on the channel.
     ///
     /// Sends the batch if the buffer is full.
@@ -282,7 +284,9 @@ pub struct Sender<T> {
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        Self { core: self.core.clone() }
+        Self {
+            core: self.core.clone(),
+        }
     }
 }
 
@@ -455,7 +459,9 @@ pub struct Receiver<T> {
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        Self { core: self.core.clone() }
+        Self {
+            core: self.core.clone(),
+        }
     }
 }
 
