@@ -136,6 +136,11 @@ pub struct SyncSender<T> {
 derive_clone!(SyncSender);
 
 impl<T> SyncSender<T> {
+    /// Converts `SyncSender` to asynchronous `Sender`.
+    pub fn into_async(self) -> Sender<T> {
+        Sender { core: self.core }
+    }
+
     /// Send a single value.
     ///
     /// Returns [SendError] if all receivers are dropped.
@@ -282,7 +287,7 @@ impl<T> SyncBatchSender<T> {
 
 // Sender
 
-/// The sending half of a bounded channel.
+/// The asynchronous sending half of a channel.
 #[derive(Debug)]
 pub struct Sender<T> {
     core: splitrc::Tx<Core<T>>,
@@ -291,6 +296,11 @@ pub struct Sender<T> {
 derive_clone!(Sender);
 
 impl<T: 'static> Sender<T> {
+    /// Converts asynchronous `Sender` to `SyncSender`.
+    pub fn into_sync(self) -> SyncSender<T> {
+        SyncSender { core: self.core }
+    }
+
     /// Send a single value.
     ///
     /// Returns [SendError] if all receivers are dropped.
@@ -550,7 +560,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
 }
 
 impl<T> Receiver<T> {
-    /// Converts `Receiver` to `SyncReceiver`.
+    /// Converts asynchronous `Receiver` to `SyncReceiver`.
     pub fn into_sync(self) -> SyncReceiver<T> {
         SyncReceiver { core: self.core }
     }
@@ -607,7 +617,7 @@ impl<T> Receiver<T> {
 
 // SyncReceiver
 
-/// The receiving half of a channel. Reads are synchronous.
+/// The synchronous receiving half of a channel.
 #[derive(Debug)]
 pub struct SyncReceiver<T> {
     core: splitrc::Rx<Core<T>>,
@@ -616,6 +626,11 @@ pub struct SyncReceiver<T> {
 derive_clone!(SyncReceiver);
 
 impl<T> SyncReceiver<T> {
+    /// Converts `SyncReceiver` to asynchronous `Receiver`.
+    pub fn into_async(self) -> Receiver<T> {
+        Receiver { core: self.core }
+    }
+
     /// Block waiting for a single value from the channel.
     ///
     /// Returns [None] if all [Sender]s are dropped.
