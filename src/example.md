@@ -1,6 +1,7 @@
 ```rust
 # futures::executor::block_on(async {
 let (tx, rx) = batch_channel::unbounded();
+let tx = tx.into_sync();
 
 # let value = 8675309;
 # let v1 = 1;

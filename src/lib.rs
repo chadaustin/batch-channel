@@ -295,7 +295,7 @@ pub struct Sender<T> {
 
 derive_clone!(Sender);
 
-impl<T: 'static> Sender<T> {
+impl<T> Sender<T> {
     /// Converts asynchronous `Sender` to `SyncSender`.
     pub fn into_sync(self) -> SyncSender<T> {
         SyncSender { core: self.core }
@@ -697,7 +697,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
 
 /// Allocates an unbounded channel and returns the sender,
 /// receiver pair.
-pub fn unbounded<T>() -> (SyncSender<T>, Receiver<T>) {
+pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let core = Core {
         state: Mutex::new(State {
             queue: VecDeque::new(),
@@ -710,5 +710,12 @@ pub fn unbounded<T>() -> (SyncSender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
-    (SyncSender { core: core_tx }, Receiver { core: core_rx })
+    (Sender { core: core_tx }, Receiver { core: core_rx })
+}
+
+/// Allocates an unbounded channel and returns the synchronous handles
+/// as a sender, receiver pair.
+pub fn unbounded_sync<T>() -> (SyncSender<T>, SyncReceiver<T>) {
+    let (tx, rx) = unbounded();
+    (tx.into_sync(), rx.into_sync())
 }

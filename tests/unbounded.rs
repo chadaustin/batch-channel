@@ -8,7 +8,7 @@ use fixture::*;
 fn send_and_recv() {
     block_on(async move {
         let (tx, rx) = batch_channel::unbounded();
-        tx.send(10).unwrap();
+        tx.into_sync().send(10).unwrap();
         assert_eq!(Some(10), rx.recv().await);
     })
 }
@@ -26,8 +26,7 @@ fn recv_returns_none_if_sender_dropped() {
 fn recv_returns_value_if_sender_sent_before_dropping() {
     block_on(async move {
         let (tx, rx) = batch_channel::unbounded();
-        tx.send(10).unwrap();
-        drop(tx);
+        tx.into_sync().send(10).unwrap();
         assert_eq!(Some(10), rx.recv().await);
     })
 }
@@ -41,9 +40,7 @@ fn recv_wakes_when_sender_sends() {
         assert_eq!(Some(()), rx.recv().await);
     });
 
-    pool.spawn(async move {
-        tx.send(()).unwrap();
-    });
+    tx.into_sync().send(()).unwrap();
 
     pool.run();
 }
@@ -67,7 +64,7 @@ fn recv_wakes_when_sender_drops() {
 #[test]
 fn send_fails_when_receiver_drops() {
     block_on(async move {
-        let (tx, rx) = batch_channel::unbounded();
+        let (tx, rx) = batch_channel::unbounded_sync();
         drop(rx);
         assert_eq!(Err(batch_channel::SendError(())), tx.send(()));
     })
@@ -79,8 +76,8 @@ fn two_receivers_and_two_senders() {
         let (tx1, rx1) = batch_channel::unbounded();
         let tx2 = tx1.clone();
         let rx2 = rx1.clone();
-        tx1.send(1).unwrap();
-        tx2.send(2).unwrap();
+        tx1.send(1).await.unwrap();
+        tx2.send(2).await.unwrap();
         assert_eq!(Some(1), rx1.recv().await);
         assert_eq!(Some(2), rx2.recv().await);
     })
@@ -91,6 +88,7 @@ fn two_reads_from_one_push() {
     let mut pool = LocalPool::new();
 
     let (tx, rx1) = batch_channel::unbounded();
+    let tx = tx.into_sync();
     let rx2 = rx1.clone();
 
     pool.spawn(async move {
@@ -109,6 +107,7 @@ fn send_batch_wakes_both() {
     let mut pool = LocalPool::new();
 
     let (tx, rx1) = batch_channel::unbounded();
+    let tx = tx.into_sync();
     let rx2 = rx1.clone();
 
     pool.spawn(async move {
@@ -127,6 +126,7 @@ fn send_batch_wakes_both() {
 #[test]
 fn send_iter_array() {
     let (tx, rx) = batch_channel::unbounded();
+    let tx = tx.into_sync();
     tx.send_iter(["foo", "bar", "baz"]).unwrap();
     drop(tx);
 
@@ -135,6 +135,7 @@ fn send_iter_array() {
     });
 
     let (tx, rx) = batch_channel::unbounded();
+    let tx = tx.into_sync();
     drop(rx);
     assert_eq!(
         Err(batch_channel::SendError(["foo", "bar", "baz"])),
@@ -145,8 +146,7 @@ fn send_iter_array() {
 #[test]
 fn send_iter_vec() {
     let (tx, rx) = batch_channel::unbounded();
-    tx.send_iter(vec!["foo", "bar", "baz"]).unwrap();
-    drop(tx);
+    tx.into_sync().send_iter(vec!["foo", "bar", "baz"]).unwrap();
 
     block_on(async move {
         assert_eq!(vec!["foo", "bar", "baz"], rx.recv_batch(4).await);
@@ -157,7 +157,7 @@ fn send_iter_vec() {
 fn recv_batch_returning_all() {
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_iter([10, 20, 30]).unwrap();
+    tx.into_sync().send_iter([10, 20, 30]).unwrap();
     block_on(async move {
         assert_eq!(vec![10, 20, 30], rx.recv_batch(100).await);
     })
@@ -167,7 +167,7 @@ fn recv_batch_returning_all() {
 fn recv_batch_returning_some() {
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_iter([10, 20, 30]).unwrap();
+    tx.into_sync().send_iter([10, 20, 30]).unwrap();
     block_on(async move {
         assert_eq!(vec![10, 20], rx.recv_batch(2).await);
         assert_eq!(vec![30], rx.recv_batch(2).await);
@@ -178,7 +178,7 @@ fn recv_batch_returning_some() {
 fn recv_vec_returning_some() {
     let (tx, rx) = batch_channel::unbounded();
 
-    tx.send_iter([10, 20, 30]).unwrap();
+    tx.into_sync().send_iter([10, 20, 30]).unwrap();
     block_on(async move {
         let mut vec = Vec::new();
         () = rx.recv_vec(2, &mut vec).await;
@@ -214,7 +214,7 @@ fn batch_locally_accumulates() {
 
     let read_values = read_values_outer;
 
-    let mut tx = tx.batch(2);
+    let mut tx = tx.into_sync().batch(2);
 
     assert_eq!(Ok(()), tx.send(1));
     pool.run_until_stalled();
@@ -246,7 +246,7 @@ fn batch_can_be_drained() {
         }
     });
 
-    let mut tx = tx.batch(3);
+    let mut tx = tx.into_sync().batch(3);
 
     assert_eq!(Ok(()), tx.send(1));
     pool.run_until_stalled();
@@ -290,8 +290,7 @@ fn blocking_recv_stress_condvar() {
     for _ in 0..N {
         let tx_barrier = Arc::clone(&barrier);
         let rx_barrier = Arc::clone(&barrier);
-        let (tx, rx) = batch_channel::unbounded();
-        let rx = rx.into_sync();
+        let (tx, rx) = batch_channel::unbounded_sync();
         handles.push(thread::spawn(move || {
             tx_barrier.wait();
             for i in 0..I {
@@ -314,8 +313,7 @@ fn blocking_recv_stress_condvar() {
 
 #[test]
 fn recv_batch_blocking() {
-    let (tx, rx) = batch_channel::unbounded();
-    let rx = rx.into_sync();
+    let (tx, rx) = batch_channel::unbounded_sync();
     tx.send(10).unwrap();
     tx.send(20).unwrap();
     assert_eq!(vec![10, 20], rx.recv_batch(4));

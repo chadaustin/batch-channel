@@ -54,7 +54,8 @@ impl UnboundedChannel for BatchChannel {
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
     fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
-        batch_channel::unbounded()
+        let (tx, rx) = batch_channel::unbounded();
+        (tx.into_sync(), rx)
     }
     fn send<T: fmt::Debug + Send + Sync + 'static>(
         tx: &Self::Sender<T>,
