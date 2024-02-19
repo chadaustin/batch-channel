@@ -18,6 +18,18 @@ use std::task::Waker;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
+macro_rules! derive_clone {
+    ($t:ident) => {
+        impl<T> Clone for $t<T> {
+            fn clone(&self) -> Self {
+                Self {
+                    core: self.core.clone(),
+                }
+            }
+        }
+    };
+}
+
 #[derive(Debug)]
 struct State<T> {
     queue: VecDeque<T>,
@@ -121,13 +133,7 @@ pub struct SyncSender<T> {
     core: splitrc::Tx<Core<T>>,
 }
 
-impl<T> Clone for SyncSender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            core: self.core.clone(),
-        }
-    }
-}
+derive_clone!(SyncSender);
 
 impl<T> SyncSender<T> {
     /// Send a single value.
@@ -282,13 +288,7 @@ pub struct Sender<T> {
     core: splitrc::Tx<Core<T>>,
 }
 
-impl<T> Clone for Sender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            core: self.core.clone(),
-        }
-    }
-}
+derive_clone!(Sender);
 
 impl<T: 'static> Sender<T> {
     /// Send a single value.
@@ -455,13 +455,7 @@ pub struct Receiver<T> {
     core: splitrc::Rx<Core<T>>,
 }
 
-impl<T> Clone for Receiver<T> {
-    fn clone(&self) -> Self {
-        Self {
-            core: self.core.clone(),
-        }
-    }
-}
+derive_clone!(Receiver);
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct Recv<'a, T> {
