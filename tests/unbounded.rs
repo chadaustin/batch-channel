@@ -291,6 +291,7 @@ fn blocking_recv_stress_condvar() {
         let tx_barrier = Arc::clone(&barrier);
         let rx_barrier = Arc::clone(&barrier);
         let (tx, rx) = batch_channel::unbounded();
+        let rx = rx.into_sync();
         handles.push(thread::spawn(move || {
             tx_barrier.wait();
             for i in 0..I {
@@ -300,9 +301,9 @@ fn blocking_recv_stress_condvar() {
         handles.push(thread::spawn(move || {
             rx_barrier.wait();
             for i in 0..I {
-                assert_eq!(Some(i), rx.recv_blocking());
+                assert_eq!(Some(i), rx.recv());
             }
-            assert_eq!(None, rx.recv_blocking());
+            assert_eq!(None, rx.recv());
         }));
     }
 
@@ -314,7 +315,8 @@ fn blocking_recv_stress_condvar() {
 #[test]
 fn recv_batch_blocking() {
     let (tx, rx) = batch_channel::unbounded();
+    let rx = rx.into_sync();
     tx.send(10).unwrap();
     tx.send(20).unwrap();
-    assert_eq!(vec![10, 20], rx.recv_batch_blocking(4));
+    assert_eq!(vec![10, 20], rx.recv_batch(4));
 }

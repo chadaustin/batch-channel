@@ -125,7 +125,7 @@ impl<T> fmt::Display for SendError<T> {
 
 impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
-// Sender
+// SyncSender
 
 /// The sending half of an channel.
 #[derive(Debug)]
@@ -218,7 +218,7 @@ impl<T> SyncSender<T> {
     }
 }
 
-// BatchSender
+// SyncBatchSender
 
 /// Automatically sends values on the channel in batches.
 ///
@@ -449,7 +449,7 @@ impl<T> BatchSender<T> {
 
 // Receiver
 
-/// The receiving half of a channel.
+/// The receiving half of a channel. Reads are asynchronous.
 #[derive(Debug)]
 pub struct Receiver<T> {
     core: splitrc::Rx<Core<T>>,
@@ -550,21 +550,9 @@ impl<'a, T> Future for RecvVec<'a, T> {
 }
 
 impl<T> Receiver<T> {
-    /// Block waiting for a single value from the channel.
-    ///
-    /// Returns [None] if all [Sender]s are dropped.
-    pub fn recv_blocking(&self) -> Option<T> {
-        let mut state = self.core.block_until_not_empty();
-        match state.queue.pop_front() {
-            Some(value) => {
-                self.core.wake_all_tx(state);
-                Some(value)
-            }
-            None => {
-                assert!(state.tx_dropped);
-                None
-            }
-        }
+    /// Converts `Receiver` to `SyncReceiver`.
+    pub fn into_sync(self) -> SyncReceiver<T> {
+        SyncReceiver { core: self.core }
     }
 
     /// Wait for a single value from the channel.
@@ -575,28 +563,6 @@ impl<T> Receiver<T> {
     }
 
     // TODO: try_recv
-
-    /// Block waiting for values from the channel.
-    ///
-    /// Up to `element_limit` values are returned if they're already
-    /// available. Otherwise, waits for any values to be available.
-    ///
-    /// Returns an empty [Vec] if all [Sender]s are dropped.
-    pub fn recv_batch_blocking(&self, element_limit: usize) -> Vec<T> {
-        let mut state = self.core.block_until_not_empty();
-
-        let q = &mut state.queue;
-        let q_len = q.len();
-        if q_len == 0 {
-            assert!(state.tx_dropped);
-            return Vec::new();
-        }
-
-        let capacity = min(q_len, element_limit);
-        let v = Vec::from_iter(q.drain(..capacity));
-        self.core.wake_all_tx(state);
-        v
-    }
 
     /// Wait for up to `element_limit` values from the channel.
     ///
@@ -637,6 +603,57 @@ impl<T> Receiver<T> {
     }
 
     // TODO: try_recv_vec
+}
+
+// SyncReceiver
+
+/// The receiving half of a channel. Reads are synchronous.
+#[derive(Debug)]
+pub struct SyncReceiver<T> {
+    core: splitrc::Rx<Core<T>>,
+}
+
+derive_clone!(SyncReceiver);
+
+impl<T> SyncReceiver<T> {
+    /// Block waiting for a single value from the channel.
+    ///
+    /// Returns [None] if all [Sender]s are dropped.
+    pub fn recv(&self) -> Option<T> {
+        let mut state = self.core.block_until_not_empty();
+        match state.queue.pop_front() {
+            Some(value) => {
+                self.core.wake_all_tx(state);
+                Some(value)
+            }
+            None => {
+                assert!(state.tx_dropped);
+                None
+            }
+        }
+    }
+
+    /// Block waiting for values from the channel.
+    ///
+    /// Up to `element_limit` values are returned if they're already
+    /// available. Otherwise, waits for any values to be available.
+    ///
+    /// Returns an empty [Vec] if all [Sender]s are dropped.
+    pub fn recv_batch(&self, element_limit: usize) -> Vec<T> {
+        let mut state = self.core.block_until_not_empty();
+
+        let q = &mut state.queue;
+        let q_len = q.len();
+        if q_len == 0 {
+            assert!(state.tx_dropped);
+            return Vec::new();
+        }
+
+        let capacity = min(q_len, element_limit);
+        let v = Vec::from_iter(q.drain(..capacity));
+        self.core.wake_all_tx(state);
+        v
+    }
 }
 
 // Constructors
