@@ -433,7 +433,7 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 /// The internal send handle used by [Sender::autobatch].
 /// Builds a buffer of size `capacity` and flushes when it's full.
-pub struct BatchSender<T: 'static> {
+pub struct BatchSender<T> {
     sender: Sender<T>,
     capacity: usize,
     buffer: Vec<T>,
