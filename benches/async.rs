@@ -1,22 +1,19 @@
+use anyhow::anyhow;
 use async_std::task::yield_now;
-use async_trait::async_trait;
 use futures::executor::LocalPool;
 use futures::task::SpawnExt;
 use futures::StreamExt;
 use std::fmt;
+use std::future::Future;
 use std::sync::mpsc::TryRecvError;
 
-#[async_trait]
-trait UnboundedChannel {
-    type Sender<T: Send + 'static>: Send + 'static;
-    type Receiver<T: Send + 'static>: Send + 'static;
+trait UnboundedChannel: 'static {
+    type Sender<T: Send>: Send;
+    type Receiver<T: Send>: Send;
 
     fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>);
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()>;
-    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T>;
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()>;
+    fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> impl Future<Output = Option<T>> + Send;
 
     fn send_vec<T: fmt::Debug + Send + Sync>(
         tx: &Self::Sender<T>,
@@ -28,18 +25,23 @@ trait UnboundedChannel {
         Ok(values)
     }
 
-    async fn recv_batch<T: Send>(rx: &mut Self::Receiver<T>, element_limit: usize) -> Vec<T> {
-        let mut v = Vec::with_capacity(element_limit);
-        loop {
-            match Self::recv(rx).await {
-                Some(value) => {
-                    v.push(value);
-                    if v.len() == element_limit {
+    fn recv_batch<T: Send>(
+        rx: &mut Self::Receiver<T>,
+        element_limit: usize,
+    ) -> impl Future<Output = Vec<T>> + Send {
+        async move {
+            let mut v = Vec::with_capacity(element_limit);
+            loop {
+                match Self::recv(rx).await {
+                    Some(value) => {
+                        v.push(value);
+                        if v.len() == element_limit {
+                            return v;
+                        }
+                    }
+                    None => {
                         return v;
                     }
-                }
-                None => {
-                    return v;
                 }
             }
         }
@@ -48,55 +50,44 @@ trait UnboundedChannel {
 
 struct BatchChannel;
 
-#[async_trait]
 impl UnboundedChannel for BatchChannel {
-    type Sender<T: Send + 'static> = batch_channel::SyncSender<T>;
-    type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
+    type Sender<T: Send> = batch_channel::SyncSender<T>;
+    type Receiver<T: Send> = batch_channel::Receiver<T>;
 
-    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>) {
         let (tx, rx) = batch_channel::unbounded();
         (tx.into_sync(), rx)
     }
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()> {
-        Ok(tx.send(value)?)
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()> {
+        Ok(tx.send(value).map_err(|_| anyhow!("failed to send"))?)
     }
-    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.recv().await
     }
-    fn send_vec<T: fmt::Debug + Send + Sync + 'static>(
+    fn send_vec<T: fmt::Debug + Send + Sync>(
         tx: &Self::Sender<T>,
         values: Vec<T>,
     ) -> anyhow::Result<Vec<T>> {
-        Ok(tx.send_vec(values)?)
+        Ok(tx.send_vec(values).map_err(|_| anyhow!("failed to send"))?)
     }
-    async fn recv_batch<T: Send + 'static>(
-        rx: &mut Self::Receiver<T>,
-        element_limit: usize,
-    ) -> Vec<T> {
+    async fn recv_batch<T: Send>(rx: &mut Self::Receiver<T>, element_limit: usize) -> Vec<T> {
         rx.recv_batch(element_limit).await
     }
 }
 
 struct StdChannel;
 
-#[async_trait]
 impl UnboundedChannel for StdChannel {
-    type Sender<T: Send + 'static> = std::sync::mpsc::Sender<T>;
-    type Receiver<T: Send + 'static> = std::sync::mpsc::Receiver<T>;
+    type Sender<T: Send> = std::sync::mpsc::Sender<T>;
+    type Receiver<T: Send> = std::sync::mpsc::Receiver<T>;
 
-    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>) {
         std::sync::mpsc::channel()
     }
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()> {
-        Ok(tx.send(value)?)
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()> {
+        Ok(tx.send(value).map_err(|_| anyhow!("failed to send"))?)
     }
-    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T> {
         loop {
             let r = rx.try_recv();
             match r {
@@ -113,21 +104,17 @@ impl UnboundedChannel for StdChannel {
 
 struct CrossbeamChannel;
 
-#[async_trait]
 impl UnboundedChannel for CrossbeamChannel {
-    type Sender<T: Send + 'static> = crossbeam::channel::Sender<T>;
-    type Receiver<T: Send + 'static> = crossbeam::channel::Receiver<T>;
+    type Sender<T: Send> = crossbeam::channel::Sender<T>;
+    type Receiver<T: Send> = crossbeam::channel::Receiver<T>;
 
-    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>) {
         crossbeam::channel::unbounded()
     }
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()> {
-        Ok(tx.send(value)?)
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()> {
+        Ok(tx.send(value).map_err(|_| anyhow!("failed to send"))?)
     }
-    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T> {
         loop {
             let r = rx.try_recv();
             match r {
@@ -144,44 +131,38 @@ impl UnboundedChannel for CrossbeamChannel {
 
 struct FuturesChannel;
 
-#[async_trait]
 impl UnboundedChannel for FuturesChannel {
-    type Sender<T: Send + 'static> = futures::channel::mpsc::UnboundedSender<T>;
-    type Receiver<T: Send + 'static> = futures::channel::mpsc::UnboundedReceiver<T>;
+    type Sender<T: Send> = futures::channel::mpsc::UnboundedSender<T>;
+    type Receiver<T: Send> = futures::channel::mpsc::UnboundedReceiver<T>;
 
-    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>) {
         futures::channel::mpsc::unbounded()
     }
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()> {
-        Ok(tx.unbounded_send(value)?)
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()> {
+        Ok(tx
+            .unbounded_send(value)
+            .map_err(|_| anyhow!("failed to send"))?)
     }
-    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.next().await
     }
 }
 
 struct KanalChannel;
 
-#[async_trait]
 impl UnboundedChannel for KanalChannel {
-    type Sender<T: Send + 'static> = kanal::Sender<T>;
-    type Receiver<T: Send + 'static> = kanal::AsyncReceiver<T>;
+    type Sender<T: Send> = kanal::Sender<T>;
+    type Receiver<T: Send> = kanal::AsyncReceiver<T>;
 
-    fn new<T: Send + 'static>() -> (Self::Sender<T>, Self::Receiver<T>) {
+    fn new<T: Send>() -> (Self::Sender<T>, Self::Receiver<T>) {
         let (tx, rx) = kanal::unbounded();
         let rx = rx.to_async();
         (tx, rx)
     }
-    fn send<T: fmt::Debug + Send + Sync + 'static>(
-        tx: &Self::Sender<T>,
-        value: T,
-    ) -> anyhow::Result<()> {
+    fn send<T: fmt::Debug + Send + Sync>(tx: &Self::Sender<T>, value: T) -> anyhow::Result<()> {
         Ok(tx.send(value)?)
     }
-    async fn recv<T: Send + 'static>(rx: &mut Self::Receiver<T>) -> Option<T> {
+    async fn recv<T: Send>(rx: &mut Self::Receiver<T>) -> Option<T> {
         rx.recv().await.ok()
     }
 }
@@ -233,7 +214,7 @@ async fn receiver<UC: UnboundedChannel + Send>(mut rx: UC::Receiver<usize>, batc
 )]
 fn batch_size_tx_first<UC, const N: usize>(bencher: divan::Bencher)
 where
-    UC: UnboundedChannel + Send + 'static,
+    UC: UnboundedChannel + Send,
 {
     let iteration_count = 100;
     bencher
@@ -257,7 +238,7 @@ where
 )]
 fn batch_size_rx_first<UC, const N: usize>(bencher: divan::Bencher)
 where
-    UC: UnboundedChannel + Send + 'static,
+    UC: UnboundedChannel + Send,
 {
     let iteration_count = 100;
     bencher

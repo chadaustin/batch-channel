@@ -19,7 +19,6 @@ splitrc = "0.1"
 [dev-dependencies]
 anyhow = "1"
 async-std = "1"
-async-trait = "0.1"
 crossbeam = "0.8"
 divan = "0.1"
 futures = "0.3"
