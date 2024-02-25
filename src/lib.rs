@@ -127,7 +127,7 @@ impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
 // SyncSender
 
-/// The sending half of an channel.
+/// The sending half of a channel.
 #[derive(Debug)]
 pub struct SyncSender<T> {
     core: splitrc::Tx<Core<T>>,
@@ -331,27 +331,28 @@ impl<T> Sender<T> {
     /// Automatically accumulate sends into a buffer of size `batch`
     /// and send when full.
     ///
-    /// The callback's future must be boxed to work around [type system
-    /// limitations in Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
-    pub async fn autobatch<F, R>(self, capacity: usize, f: F) -> Result<R, SendError<()>>
+    /// The callback's future must be boxed to work around [type
+    /// system limitations in
+    /// Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
+    pub async fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
     where
         for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
     {
         let mut tx = BatchSender {
             sender: self,
-            capacity,
-            buffer: Vec::with_capacity(capacity),
+            batch_limit,
+            buffer: Vec::with_capacity(batch_limit),
         };
         let r = f(&mut tx).await?;
         tx.drain().await?;
         Ok(r)
     }
 
-    /// Same as [Sender::autobatch] except that it immediately
-    /// returns () when `f` returns [SendError]. This is a convenience
-    /// wrapper for the common case that the future is passed to a
-    /// spawn function and the receiver being dropped (i.e.
-    /// [SendError]) is considered a clean cancellation.
+    /// Same as [Sender::autobatch] except that it immediately returns
+    /// () when `f` returns [SendError]. This is a convenience wrapper
+    /// for the common case that the future is passed to a spawn
+    /// function and the receiver being dropped (i.e. [SendError]) is
+    /// considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
         for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
@@ -432,10 +433,10 @@ impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 // BatchSender
 
 /// The internal send handle used by [Sender::autobatch].
-/// Builds a buffer of size `capacity` and flushes when it's full.
+/// Builds a buffer of size `batch_limit` and flushes when it's full.
 pub struct BatchSender<T> {
     sender: Sender<T>,
-    capacity: usize,
+    batch_limit: usize,
     buffer: Vec<T>,
 }
 
@@ -444,7 +445,7 @@ impl<T> BatchSender<T> {
     /// queue when the buffer fills.
     pub async fn send(&mut self, value: T) -> Result<(), SendError<()>> {
         self.buffer.push(value);
-        if self.buffer.len() == self.capacity {
+        if self.buffer.len() == self.batch_limit {
             self.drain().await?;
         }
         Ok(())
