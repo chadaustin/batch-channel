@@ -31,8 +31,7 @@ macro_rules! derive_clone {
 }
 
 #[derive(Debug)]
-struct State<T> {
-    queue: VecDeque<T>,
+struct StateBase {
     capacity: usize,
     tx_dropped: bool,
     rx_dropped: bool,
@@ -40,11 +39,31 @@ struct State<T> {
     rx_wakers: Vec<Waker>,
 }
 
-impl<T> State<T> {
+impl StateBase {
     fn target_capacity(&self) -> usize {
         // TODO: We could offer an option to use queue.capacity
         // instead.
         self.capacity
+    }
+}
+
+#[derive(Debug)]
+struct State<T> {
+    base: StateBase,
+    queue: VecDeque<T>,
+}
+
+impl<T> std::ops::Deref for State<T> {
+    type Target = StateBase;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+
+impl<T> std::ops::DerefMut for State<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
     }
 }
 
@@ -684,12 +703,14 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let capacity = capacity.max(1);
     let core = Core {
         state: Mutex::new(State {
+            base: StateBase {
+                capacity,
+                tx_dropped: false,
+                rx_dropped: false,
+                tx_wakers: Vec::new(),
+                rx_wakers: Vec::new(),
+            },
             queue: VecDeque::new(),
-            capacity,
-            tx_dropped: false,
-            rx_dropped: false,
-            tx_wakers: Vec::new(),
-            rx_wakers: Vec::new(),
         }),
         not_empty: OnceLock::new(),
     };
@@ -702,12 +723,14 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let core = Core {
         state: Mutex::new(State {
+            base: StateBase {
+                capacity: UNBOUNDED_CAPACITY,
+                tx_dropped: false,
+                rx_dropped: false,
+                tx_wakers: Vec::new(),
+                rx_wakers: Vec::new(),
+            },
             queue: VecDeque::new(),
-            capacity: UNBOUNDED_CAPACITY,
-            tx_dropped: false,
-            rx_dropped: false,
-            tx_wakers: Vec::new(),
-            rx_wakers: Vec::new(),
         }),
         not_empty: OnceLock::new(),
     };

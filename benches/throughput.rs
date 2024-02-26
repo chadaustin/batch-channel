@@ -149,7 +149,11 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     }
 
     let elapsed = now.elapsed();
-    println!("    ... {:?}, {:?} per item", elapsed, elapsed / (total_items as u32));
+    println!(
+        "    ... {:?}, {:?} per item",
+        elapsed,
+        elapsed / (total_items as u32)
+    );
 }
 
 fn main() {
