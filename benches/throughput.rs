@@ -106,8 +106,6 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
 
     let now = Instant::now();
 
-    eprintln!("spawning senders");
-
     let (tx, rx) = C::bounded(CAPACITY);
     for task_id in 0..options.tx_count {
         let tx = tx.clone();
@@ -115,7 +113,6 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
             async move {
                 tx.autobatch(options.batch_size, move |tx| {
                     async move {
-                        eprintln!("sending a batch");
                         for i in 0..SEND_COUNT {
                             tx.send((task_id, i)).await;
                         }
@@ -123,7 +120,6 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
                     .boxed()
                 })
                 .await;
-                eprintln!("done sending");
             }
             .boxed(),
         ));
@@ -136,7 +132,6 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
                 let mut batch = Vec::with_capacity(options.batch_size);
                 loop {
                     rx.recv_vec(options.batch_size, &mut batch).await;
-                    eprintln!("received a batch of length {}", batch.len());
                     if batch.is_empty() {
                         break;
                     }

@@ -556,6 +556,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
 
         let capacity = min(q_len, self.element_limit);
         self.vec.extend(q.drain(..capacity));
+        self.receiver.core.wake_all_tx(state);
         Poll::Ready(())
     }
 }

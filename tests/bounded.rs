@@ -86,6 +86,38 @@ fn recv_batch_unblocks_send() {
 }
 
 #[test]
+fn recv_vec_unblocks_send() {
+    let mut pool = LocalPool::new();
+    let (tx, rx) = batch_channel::bounded(1);
+
+    let state = Rc::new(RefCell::new(""));
+
+    pool.spawn({
+        let state = state.clone();
+        async move {
+            *state.borrow_mut() = "sending";
+            tx.send(10).await.unwrap();
+            *state.borrow_mut() = "sent 1";
+            tx.send(20).await.unwrap();
+            *state.borrow_mut() = "sent 2";
+        }
+    });
+
+    pool.run_until_stalled();
+    assert_eq!("sent 1", *state.borrow());
+    let mut batch = Vec::new();
+    block_on(rx.recv_vec(5, &mut batch));
+    assert_eq!(vec![10], batch);
+
+    pool.run_until_stalled();
+    assert_eq!("sent 2", *state.borrow());
+    block_on(rx.recv_vec(5, &mut batch));
+    assert_eq!(vec![20], batch);
+
+    pool.run();
+}
+
+#[test]
 fn recv_batch_returning_all() {
     let (tx, rx) = batch_channel::bounded(3);
 
