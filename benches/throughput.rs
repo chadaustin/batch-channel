@@ -82,6 +82,7 @@ impl<T: Send> ChannelReceiver<T> for batch_channel::Receiver<T> {
     }
 }
 
+#[derive(Copy, Clone)]
 struct Options {
     batch_size: usize,
     tx_count: usize,
@@ -90,7 +91,7 @@ struct Options {
 
 async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     _: C,
-    options: &'static Options,
+    options: Options,
     spawn_tx: SpawnTx,
     spawn_rx: SpawnRx,
 ) where
@@ -99,7 +100,8 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     SpawnRx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
 {
     const CAPACITY: usize = 65536;
-    const SEND_COUNT: usize = 2 * 1024 * 1024;
+    const SEND_COUNT: usize = 16 * 1024 * 1024;
+    let total_items = SEND_COUNT * options.tx_count;
 
     let mut senders = Vec::new();
     let mut receivers = Vec::new();
@@ -146,27 +148,30 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
         () = r.await.expect("should not complete");
     }
 
-    println!("... {:?}", now.elapsed());
+    let elapsed = now.elapsed();
+    println!("    ... {:?}, {:?} per item", elapsed, elapsed / (total_items as u32));
 }
 
 fn main() {
-    println!("benchmarking throughput");
-    println!();
-    println!("batch-channel");
-    const OPTIONS: Options = Options {
-        batch_size: 128,
-        tx_count: 4,
-        rx_count: 4,
-    };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .build()
         .expect("failed to create tokio runtime");
 
-    runtime.block_on(benchmark_throughput_async(
-        BatchChannel,
-        &OPTIONS,
-        |f| runtime.spawn(f),
-        |f| runtime.spawn(f),
-    ));
+    println!("benchmarking throughput");
+    println!();
+    for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+        let options = Options {
+            batch_size: batch_size,
+            tx_count: 4,
+            rx_count: 4,
+        };
+        println!("batch-channel batch={}", batch_size);
+        runtime.block_on(benchmark_throughput_async(
+            BatchChannel,
+            options,
+            |f| runtime.spawn(f),
+            |f| runtime.spawn(f),
+        ));
+    }
 }

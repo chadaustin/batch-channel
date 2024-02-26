@@ -10,7 +10,9 @@ repository = "https://github.com/chadaustin/batch-channel"
 keywords = ["async", "channel"]
 categories = ["asynchronous"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release-with-debug]
+inherits = "release"
+debug = true
 
 [dependencies]
 futures-core = "0.3"
