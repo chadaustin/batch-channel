@@ -162,20 +162,22 @@ fn main() {
         .build()
         .expect("failed to create tokio runtime");
 
-    println!("benchmarking throughput");
-    println!();
-    for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
-        let options = Options {
-            batch_size: batch_size,
-            tx_count: 4,
-            rx_count: 4,
-        };
-        println!("batch-channel batch={}", batch_size);
-        runtime.block_on(benchmark_throughput_async(
-            BatchChannel,
-            options,
-            |f| runtime.spawn(f),
-            |f| runtime.spawn(f),
-        ));
+    for (tx_count, rx_count) in [(1, 1), (4, 4)] {
+        println!();
+        println!("benchmark_throughput_async tx={} rx={}", tx_count, rx_count);
+        for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+            let options = Options {
+                batch_size,
+                tx_count,
+                rx_count,
+            };
+            println!("  batch-channel batch={}", batch_size);
+            runtime.block_on(benchmark_throughput_async(
+                BatchChannel,
+                options,
+                |f| runtime.spawn(f),
+                |f| runtime.spawn(f),
+            ));
+        }
     }
 }
