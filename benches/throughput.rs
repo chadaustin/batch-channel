@@ -8,6 +8,15 @@ trait Channel {
     type Receiver<T: Send + 'static>: ChannelReceiver<T> + 'static;
 
     fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>);
+
+    // TODO: Should this be separate traits?
+
+    type SyncSender<T: Send + 'static>: ChannelSyncSender<T> + 'static;
+    type SyncReceiver<T: Send + 'static>: ChannelSyncReceiver<T> + 'static;
+
+    fn bounded_sync<T: Send + 'static>(
+        capacity: usize,
+    ) -> (Self::SyncSender<T>, Self::SyncReceiver<T>);
 }
 
 trait ChannelSender<T>: Clone + Send {
@@ -30,14 +39,41 @@ trait ChannelReceiver<T>: Clone + Send {
     ) -> impl Future<Output = ()> + Send;
 }
 
+trait ChannelSyncSender<T>: Clone + Send {
+    type BatchSenderSync: ChannelBatchSenderSync<T>;
+
+    fn autobatch<F>(self, batch_limit: usize, f: F)
+    where
+        F: FnOnce(&mut Self::BatchSenderSync);
+}
+
+trait ChannelBatchSenderSync<T>: Send {
+    fn send(&mut self, value: T);
+}
+
+trait ChannelSyncReceiver<T>: Clone + Send {
+    fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>);
+}
+
+// batch-channel, this crate
+
 struct BatchChannel;
 
 impl Channel for BatchChannel {
     type Sender<T: Send + 'static> = batch_channel::Sender<T>;
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
+    type SyncSender<T: Send + 'static> = batch_channel::SyncSender<T>;
+    type SyncReceiver<T: Send + 'static> = batch_channel::SyncReceiver<T>;
+
     fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>) {
         batch_channel::bounded(capacity)
+    }
+
+    fn bounded_sync<T: Send + 'static>(
+        capacity: usize,
+    ) -> (Self::SyncSender<T>, Self::SyncReceiver<T>) {
+        batch_channel::bounded_sync(capacity)
     }
 }
 
@@ -82,6 +118,34 @@ impl<T: Send> ChannelReceiver<T> for batch_channel::Receiver<T> {
     }
 }
 
+impl<T: Send> ChannelSyncSender<T> for batch_channel::SyncSender<T> {
+    type BatchSenderSync = batch_channel::SyncBatchSender<T>;
+
+    fn autobatch<F>(self, batch_limit: usize, f: F)
+    where
+        F: FnOnce(&mut Self::BatchSenderSync),
+    {
+        batch_channel::SyncSender::autobatch(self, batch_limit, |tx| {
+            f(tx);
+            Ok(())
+        })
+        .expect("in this benchmark, receiver never drops")
+    }
+}
+
+impl<T: Send> ChannelBatchSenderSync<T> for batch_channel::SyncBatchSender<T> {
+    fn send(&mut self, value: T) {
+        batch_channel::SyncBatchSender::send(self, value)
+            .expect("in this benchmark, receiver never drops")
+    }
+}
+
+impl<T: Send> ChannelSyncReceiver<T> for batch_channel::SyncReceiver<T> {
+    fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>) {
+        batch_channel::SyncReceiver::recv_vec(self, element_limit, vec)
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Options {
     batch_size: usize,
@@ -100,8 +164,8 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     SpawnRx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
 {
     const CAPACITY: usize = 65536;
-    const SEND_COUNT: usize = 16 * 1024 * 1024;
-    let total_items = SEND_COUNT * options.tx_count;
+    let send_count: usize = 1 * 1024 * 1024 * options.batch_size;
+    let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::new();
     let mut receivers = Vec::new();
@@ -115,7 +179,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
             async move {
                 tx.autobatch(options.batch_size, move |tx| {
                     async move {
-                        for i in 0..SEND_COUNT {
+                        for i in 0..send_count {
                             tx.send((task_id, i)).await;
                         }
                     }
@@ -156,16 +220,69 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     );
 }
 
+fn benchmark_throughput_sync<C>(_: C, options: Options)
+where
+    C: Channel,
+{
+    const CAPACITY: usize = 65536;
+    let send_count: usize = 1 * 1024 * 1024 * options.batch_size;
+    let total_items = send_count * options.tx_count;
+
+    let mut senders = Vec::new();
+    let mut receivers = Vec::new();
+
+    let now = Instant::now();
+
+    let (tx, rx) = C::bounded_sync(CAPACITY);
+    for task_id in 0..options.tx_count {
+        let tx = tx.clone();
+        senders.push(std::thread::spawn(move || {
+            tx.autobatch(options.batch_size, move |tx| {
+                for i in 0..send_count {
+                    tx.send((task_id, i));
+                }
+            })
+        }));
+    }
+    drop(tx);
+    for _ in 0..options.rx_count {
+        let rx = rx.clone();
+        receivers.push(std::thread::spawn(move || {
+            let mut batch = Vec::with_capacity(options.batch_size);
+            loop {
+                rx.recv_vec(options.batch_size, &mut batch);
+                if batch.is_empty() {
+                    break;
+                }
+            }
+        }));
+    }
+    drop(rx);
+
+    for r in receivers {
+        () = r.join().expect("should not complete");
+    }
+
+    let elapsed = now.elapsed();
+    println!(
+        "    ... {:?}, {:?} per item",
+        elapsed,
+        elapsed / (total_items as u32)
+    );
+}
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .build()
         .expect("failed to create tokio runtime");
 
-    for (tx_count, rx_count) in [(1, 1), (4, 4)] {
+    let batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+
+    for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
         println!();
         println!("benchmark_throughput_async tx={} rx={}", tx_count, rx_count);
-        for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+        for batch_size in batch_sizes {
             let options = Options {
                 batch_size,
                 tx_count,
@@ -178,6 +295,18 @@ fn main() {
                 |f| runtime.spawn(f),
                 |f| runtime.spawn(f),
             ));
+        }
+
+        println!();
+        println!("benchmark_throughput_sync tx={} rx={}", tx_count, rx_count);
+        for batch_size in batch_sizes {
+            let options = Options {
+                batch_size,
+                tx_count,
+                rx_count,
+            };
+            println!("  batch-channel batch={}", batch_size);
+            benchmark_throughput_sync(BatchChannel, options);
         }
     }
 }
