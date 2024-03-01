@@ -238,3 +238,13 @@ fn sender_and_receiver_of_noncloneable_can_clone() {
     _ = tx.clone();
     _ = rx.clone();
 }
+
+#[test]
+fn recv_vec_blocking() {
+    const CAPACITY: usize = 3;
+    let (tx, rx) = batch_channel::bounded_sync(CAPACITY);
+    tx.send_iter([10, 20]).unwrap();
+    let mut vec = Vec::with_capacity(CAPACITY);
+    rx.recv_vec(CAPACITY, &mut vec);
+    assert_eq!(vec![10, 20], vec);
+}

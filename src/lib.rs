@@ -690,6 +690,33 @@ impl<T> SyncReceiver<T> {
         self.core.wake_all_tx(state);
         v
     }
+
+    /// Wait for up to `element_limit` values from the channel and
+    /// store them in `vec`.
+    ///
+    /// `vec` should be empty when passed in. Nevertheless, `recv_vec`
+    /// will clear it before adding values. The intent of `recv_vec`
+    /// is that batches can be repeatedly read by workers without new
+    /// allocations.
+    ///
+    /// It's not required, but `vec`'s capacity should be greater than
+    /// or equal to element_limit to avoid reallocation.
+    pub fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>) {
+        vec.clear();
+
+        let mut state = self.core.block_until_not_empty();
+        let q = &mut state.queue;
+        let q_len = q.len();
+        if q_len == 0 {
+            assert!(state.tx_dropped);
+            // The result vector is already cleared.
+            return;
+        }
+
+        let capacity = min(q_len, element_limit);
+        vec.extend(q.drain(..capacity));
+        self.core.wake_all_tx(state);
+    }
 }
 
 // Constructors
@@ -716,6 +743,17 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     };
     let (core_tx, core_rx) = splitrc::new(core);
     (Sender { core: core_tx }, Receiver { core: core_rx })
+}
+
+/// Allocates a bounded channel and returns the synchronous handles as
+/// a sender, receiver pair.
+///
+/// Because handles can be converted freely between sync and async,
+/// and Rust async is polling, unbuffered channels are not
+/// supported. A capacity of 0 is rounded up to 1.
+pub fn bounded_sync<T>(capacity: usize) -> (SyncSender<T>, SyncReceiver<T>) {
+    let (tx, rx) = bounded(capacity);
+    (tx.into_sync(), rx.into_sync())
 }
 
 /// Allocates an unbounded channel and returns the sender,
