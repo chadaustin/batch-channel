@@ -240,6 +240,22 @@ impl<T> SyncSender<T> {
             buffer: Vec::with_capacity(capacity),
         }
     }
+
+    /// Automatically accumulate sends into a buffer of size `batch_limit`
+    /// and send when full.
+    pub fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
+    where
+        F: (FnOnce(&mut SyncBatchSender<T>) -> Result<R, SendError<()>>),
+    {
+        let mut tx = SyncBatchSender {
+            sender: self,
+            capacity: batch_limit,
+            buffer: Vec::with_capacity(batch_limit),
+        };
+        let r = f(&mut tx)?;
+        tx.drain()?;
+        Ok(r)
+    }
 }
 
 // SyncBatchSender
@@ -347,7 +363,7 @@ impl<T> Sender<T> {
         }
     }
 
-    /// Automatically accumulate sends into a buffer of size `batch`
+    /// Automatically accumulate sends into a buffer of size `batch_limit`
     /// and send when full.
     ///
     /// The callback's future must be boxed to work around [type

@@ -233,6 +233,45 @@ fn batch_locally_accumulates() {
 }
 
 #[test]
+fn autobatch_locally_accumulates() {
+    let mut pool = LocalPool::new();
+
+    let (tx, rx) = batch_channel::unbounded();
+    let read_values = Rc::new(RefCell::new(Vec::new()));
+    let read_values_outer = read_values.clone();
+
+    pool.spawn(async move {
+        while let Some(v) = rx.recv().await {
+            read_values.borrow_mut().push(v);
+        }
+    });
+
+    let read_values = read_values_outer;
+
+    tx.into_sync()
+        .autobatch(2, |tx| {
+            assert_eq!(Ok(()), tx.send(1));
+            pool.run_until_stalled();
+            assert_eq!(0, read_values.borrow().len());
+
+            assert_eq!(Ok(()), tx.send(2));
+            pool.run_until_stalled();
+            assert_eq!(vec![1, 2], *read_values.borrow());
+
+            assert_eq!(Ok(()), tx.send(3));
+            pool.run_until_stalled();
+            assert_eq!(vec![1, 2], *read_values.borrow());
+
+            Ok(())
+        })
+        .expect("receiver never dropped");
+
+    // autobatch drained
+    pool.run();
+    assert_eq!(vec![1, 2, 3], *read_values.borrow());
+}
+
+#[test]
 fn batch_can_be_drained() {
     let mut pool = LocalPool::new();
 
