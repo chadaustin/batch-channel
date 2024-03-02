@@ -8,9 +8,9 @@ trait Channel {
     type Receiver<T: Send + 'static>: ChannelReceiver<T> + 'static;
 
     fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>);
+}
 
-    // TODO: Should this be separate traits?
-
+trait ChannelSync {
     type SyncSender<T: Send + 'static>: ChannelSyncSender<T> + 'static;
     type SyncReceiver<T: Send + 'static>: ChannelSyncReceiver<T> + 'static;
 
@@ -63,12 +63,14 @@ impl Channel for BatchChannel {
     type Sender<T: Send + 'static> = batch_channel::Sender<T>;
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
-    type SyncSender<T: Send + 'static> = batch_channel::SyncSender<T>;
-    type SyncReceiver<T: Send + 'static> = batch_channel::SyncReceiver<T>;
-
     fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>) {
         batch_channel::bounded(capacity)
     }
+}
+
+impl ChannelSync for BatchChannel {
+    type SyncSender<T: Send + 'static> = batch_channel::SyncSender<T>;
+    type SyncReceiver<T: Send + 'static> = batch_channel::SyncReceiver<T>;
 
     fn bounded_sync<T: Send + 'static>(
         capacity: usize,
@@ -222,7 +224,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
 
 fn benchmark_throughput_sync<C>(_: C, options: Options)
 where
-    C: Channel,
+    C: ChannelSync,
 {
     const CAPACITY: usize = 65536;
     let send_count: usize = 1 * 1024 * 1024 * options.batch_size;
