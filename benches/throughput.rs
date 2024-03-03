@@ -501,6 +501,25 @@ fn main() {
 
     let batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 
+    fn bench_async<C: Channel>(
+        runtime: &tokio::runtime::Runtime,
+        name: &str,
+        options: Options,
+        channel: C,
+    ) {
+        print!("    {: <13}: ", name);
+        runtime.block_on(benchmark_throughput_async(channel, options));
+    }
+
+    fn bench_sync<C: ChannelSync>(
+        name: &str,
+        options: Options,
+        channel: C,
+    ) {
+        print!("    {: <13}: ", name);
+        benchmark_throughput_sync(channel, options);
+    }
+
     for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
         println!();
         println!("throughput async (tx={} rx={})", tx_count, rx_count);
@@ -511,12 +530,10 @@ fn main() {
                 tx_count,
                 rx_count,
             };
-            print!("    batch-channel: ");
-            runtime.block_on(benchmark_throughput_async(BatchChannel, options));
-            print!("    kanal:         ");
-            runtime.block_on(benchmark_throughput_async(KanalChannel, options));
-            print!("    async-channel: ");
-            runtime.block_on(benchmark_throughput_async(AsyncChannel, options));
+
+            bench_async(&runtime, "batch-channel", options, BatchChannel);
+            bench_async(&runtime, "kanal", options, KanalChannel);
+            bench_async(&runtime, "async-channel", options, AsyncChannel);
         }
 
         println!();
@@ -528,12 +545,9 @@ fn main() {
                 tx_count,
                 rx_count,
             };
-            print!("    batch-channel: ");
-            benchmark_throughput_sync(BatchChannel, options);
-            print!("    kanal:         ");
-            benchmark_throughput_sync(KanalChannel, options);
-            print!("    crossbeam:     ");
-            benchmark_throughput_sync(CrossbeamChannel, options);
+            bench_sync("batch-channel", options, BatchChannel);
+            bench_sync("kanal", options, KanalChannel);
+            bench_sync("crossbeam", options, CrossbeamChannel);
         }
     }
 }
