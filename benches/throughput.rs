@@ -496,7 +496,10 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     drop(rx);
 
     for r in receivers {
-        () = r.join().expect("should not complete");
+        () = r.join().expect("thread panicked");
+    }
+    for s in senders {
+        () = s.join().expect("thread panicked");
     }
 
     let elapsed = now.elapsed();
