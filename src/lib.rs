@@ -457,7 +457,6 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                 self.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
             } else if state.rx_dropped {
-                // TODO: add a test for when receiver is dropped after iterator is drained
                 return Poll::Ready(Err(SendError(())));
             } else if state.has_capacity() {
                 state.queue.push_back(pi.next().unwrap());

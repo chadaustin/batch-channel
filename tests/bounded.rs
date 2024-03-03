@@ -259,6 +259,16 @@ fn send_empty_iter_immediately_returns() {
 }
 
 #[test]
+fn send_empty_iter_immediately_returns_even_if_rx_is_dropped() {
+    let mut pool = LocalPool::new();
+    let (tx, rx) = batch_channel::bounded::<()>(1);
+    drop(rx);
+    pool.block_on(async move {
+        assert_eq!(Ok(()), tx.send_iter([]).await);
+    });
+}
+
+#[test]
 fn sender_and_receiver_of_noncloneable_can_clone() {
     struct NoClone;
     let (tx, rx) = batch_channel::bounded::<NoClone>(1);
