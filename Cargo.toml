@@ -20,6 +20,7 @@ splitrc = "0.1"
 
 [dev-dependencies]
 anyhow = "1"
+async-channel = "2.2"
 async-std = "1"
 crossbeam = "0.8"
 divan = "0.1"

@@ -253,7 +253,7 @@ impl<T: Send> ChannelSyncReceiver<T> for kanal::Receiver<T> {
         };
         vec.push(value);
         // Now try to read the rest.
-        for _ in 0..element_limit {
+        for _ in 1..element_limit {
             let Ok(Some(value)) = self.try_recv() else {
                 return;
             };
@@ -304,11 +304,71 @@ impl<T: Send> ChannelSyncReceiver<T> for crossbeam::channel::Receiver<T> {
         };
         vec.push(value);
         // Now try to read the rest.
-        for _ in 0..element_limit {
+        for _ in 1..element_limit {
             let Ok(value) = self.try_recv() else {
                 return;
             };
             vec.push(value);
+        }
+    }
+}
+
+// async-channel
+
+struct AsyncChannel;
+
+impl Channel for AsyncChannel {
+    const HAS_BATCH: bool = false;
+
+    type Sender<T: Send + 'static> = async_channel::Sender<T>;
+    type Receiver<T: Send + 'static> = async_channel::Receiver<T>;
+
+    fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>) {
+        async_channel::bounded(capacity)
+    }
+}
+
+impl<T: Send + 'static> ChannelSender<T> for async_channel::Sender<T> {
+    type BatchSender = async_channel::Sender<T>;
+
+    fn autobatch<F>(mut self, _batch_limit: usize, f: F) -> impl Future<Output = ()> + Send
+    where
+        for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static,
+    {
+        async move {
+            f(&mut self).await;
+        }
+    }
+}
+
+impl<T: Send> ChannelBatchSender<T> for async_channel::Sender<T> {
+    fn send(&mut self, value: T) -> impl Future<Output = ()> + Send {
+        async move {
+            async_channel::Sender::send(self, value)
+                .await
+                .expect("in this benchmark, receiver never drops")
+        }
+    }
+}
+
+impl<T: Send> ChannelReceiver<T> for async_channel::Receiver<T> {
+    fn recv_vec<'a>(
+        &'a self,
+        element_limit: usize,
+        vec: &'a mut Vec<T>,
+    ) -> impl Future<Output = ()> + Send {
+        async move {
+            let Ok(value) = self.recv().await else {
+                return;
+            };
+            vec.push(value);
+            // Now try to read the rest.
+            for _ in 1..element_limit {
+                let Ok(value) = self.try_recv() else {
+                    return;
+                };
+                vec.push(value);
+            }
         }
     }
 }
@@ -473,6 +533,13 @@ fn main() {
             print!("    kanal:         ");
             runtime.block_on(benchmark_throughput_async(
                 KanalChannel,
+                options,
+                |f| runtime.spawn(f),
+                |f| runtime.spawn(f),
+            ));
+            print!("    async-channel: ");
+            runtime.block_on(benchmark_throughput_async(
+                AsyncChannel,
                 options,
                 |f| runtime.spawn(f),
                 |f| runtime.spawn(f),
