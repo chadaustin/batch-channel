@@ -148,6 +148,67 @@ impl<T: Send> ChannelSyncReceiver<T> for batch_channel::SyncReceiver<T> {
     }
 }
 
+// Kanal
+
+struct KanalChannel;
+
+impl Channel for KanalChannel {
+    type Sender<T: Send + 'static> = kanal::AsyncSender<T>;
+    type Receiver<T: Send + 'static> = kanal::AsyncReceiver<T>;
+
+    fn bounded<T: Send + 'static>(capacity: usize) -> (Self::Sender<T>, Self::Receiver<T>) {
+        kanal::bounded_async(capacity)
+    }
+}
+
+impl<T: Send + 'static> ChannelSender<T> for kanal::AsyncSender<T> {
+    type BatchSender = kanal::AsyncSender<T>;
+
+    fn autobatch<F>(mut self, _batch_limit: usize, f: F) -> impl Future<Output = ()> + Send
+    where
+        for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static,
+    {
+        async move {
+            f(&mut self).await;
+        }
+    }
+}
+
+impl<T: Send> ChannelBatchSender<T> for kanal::AsyncSender<T> {
+    fn send(&mut self, value: T) -> impl Future<Output = ()> + Send {
+        async move {
+            kanal::AsyncSender::send(self, value)
+                .await
+                .expect("in this benchmark, receiver never drops")
+        }
+    }
+}
+
+impl<T: Send> ChannelReceiver<T> for kanal::AsyncReceiver<T> {
+    fn recv_vec<'a>(
+        &'a self,
+        element_limit: usize,
+        vec: &'a mut Vec<T>,
+    ) -> impl Future<Output = ()> + Send {
+        async move {
+            let Ok(value) = self.recv().await else {
+                return;
+            };
+            vec.push(value);
+            // Now try to read the rest.
+            for _ in 0..element_limit {
+                let Ok(Some(value)) = self.try_recv() else {
+                    return;
+                };
+                vec.push(value);
+            }
+            //eprintln!("end of recv_vec");
+        }
+    }
+}
+
+// Benchmark
+
 #[derive(Copy, Clone)]
 struct Options {
     batch_size: usize,
@@ -166,7 +227,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     SpawnRx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
 {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1 * 1024 * 1024 * options.batch_size;
+    let send_count: usize = 1 * 1024 * 1024 * (if C::has_batch { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::new();
@@ -199,6 +260,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
             async move {
                 let mut batch = Vec::with_capacity(options.batch_size);
                 loop {
+                    batch.clear();
                     rx.recv_vec(options.batch_size, &mut batch).await;
                     if batch.is_empty() {
                         break;
@@ -211,12 +273,15 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     drop(rx);
 
     for r in receivers {
-        () = r.await.expect("should not complete");
+        () = r.await.expect("task panicked");
+    }
+    for s in senders {
+        () = s.await.expect("task panicked");
     }
 
     let elapsed = now.elapsed();
     println!(
-        "    ... {:?}, {:?} per item",
+        "{:?}, {:?} per item",
         elapsed,
         elapsed / (total_items as u32)
     );
@@ -227,7 +292,7 @@ where
     C: ChannelSync,
 {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1 * 1024 * 1024 * options.batch_size;
+    let send_count: usize = 1 * 1024 * 1024 * (if C::has_batch { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::new();
@@ -252,6 +317,7 @@ where
         receivers.push(std::thread::spawn(move || {
             let mut batch = Vec::with_capacity(options.batch_size);
             loop {
+                batch.clear();
                 rx.recv_vec(options.batch_size, &mut batch);
                 if batch.is_empty() {
                     break;
@@ -267,7 +333,7 @@ where
 
     let elapsed = now.elapsed();
     println!(
-        "    ... {:?}, {:?} per item",
+        "{:?}, {:?} per item",
         elapsed,
         elapsed / (total_items as u32)
     );
@@ -283,16 +349,24 @@ fn main() {
 
     for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
         println!();
-        println!("benchmark_throughput_async tx={} rx={}", tx_count, rx_count);
+        println!("throughput async (tx={} rx={})", tx_count, rx_count);
         for batch_size in batch_sizes {
+            println!("  batch={}", batch_size);
             let options = Options {
                 batch_size,
                 tx_count,
                 rx_count,
             };
-            println!("  batch-channel batch={}", batch_size);
+            print!("    batch-channel: ");
             runtime.block_on(benchmark_throughput_async(
                 BatchChannel,
+                options,
+                |f| runtime.spawn(f),
+                |f| runtime.spawn(f),
+            ));
+            print!("    kanal:         ");
+            runtime.block_on(benchmark_throughput_async(
+                KanalChannel,
                 options,
                 |f| runtime.spawn(f),
                 |f| runtime.spawn(f),
@@ -300,14 +374,15 @@ fn main() {
         }
 
         println!();
-        println!("benchmark_throughput_sync tx={} rx={}", tx_count, rx_count);
+        println!("throughput sync (tx={} rx={})", tx_count, rx_count);
         for batch_size in batch_sizes {
+            println!("  batch={}", batch_size);
             let options = Options {
                 batch_size,
                 tx_count,
                 rx_count,
             };
-            println!("  batch-channel batch={}", batch_size);
+            print!("    batch-channel: ");
             benchmark_throughput_sync(BatchChannel, options);
         }
     }
