@@ -444,6 +444,17 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
     type Output = Result<(), SendError<()>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Optimize the case that send_iter was called with an empty
+        // iterator, and don't even acquire the lock.
+        {
+            let pi = self.values.as_mut().unwrap();
+            if pi.peek().is_none() {
+                return Poll::Ready(Ok(()));
+            }
+            // Satisfy borrow checker: we cannot hold a mut reference to
+            // self through pi before acquiring the lock below.
+        }
+
         let mut state = self.sender.core.state.lock().unwrap();
 
         // There is an awkward set of constraints here.
@@ -455,20 +466,41 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
         // TODO: We could return Peekable<I> instead.
 
         let pi = self.values.as_mut().unwrap();
-        loop {
+        // We already checked above.
+        debug_assert!(pi.peek().is_some());
+        if state.closed {
+            Poll::Ready(Err(SendError(())))
+        } else if !state.has_capacity() {
+            // We know we have a value to send, but there is no room.
+            state.tx_wakers.push(cx.waker().clone());
+            Poll::Pending
+        } else {
+            debug_assert!(state.has_capacity());
+            state.queue.push_back(pi.next().unwrap());
+            while state.has_capacity() {
+                match pi.next() {
+                    Some(value) => {
+                        state.queue.push_back(value);
+                    }
+                    None => {
+                        // Done pulling from the iterator and still
+                        // have capacity, so we're done.
+                        self.sender.core.wake_all_rx(state);
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+            }
+            // We're out of capacity, and might still have items to
+            // send. To avoid a round-trip through the scheduler, peek
+            // ahead.
             if pi.peek().is_none() {
-                // TODO: We could optimize the case that send_iter was called with an empty
-                // iterator, but that's unlikely. We probably sent a message in this loop.
                 self.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
-            } else if state.closed {
-                return Poll::Ready(Err(SendError(())));
-            } else if state.has_capacity() {
-                state.queue.push_back(pi.next().unwrap());
-            } else {
-                state.tx_wakers.push(cx.waker().clone());
-                return Poll::Pending;
             }
+
+            state.tx_wakers.push(cx.waker().clone());
+            self.sender.core.wake_all_rx(state);
+            Poll::Pending
         }
     }
 }
