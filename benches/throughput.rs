@@ -508,7 +508,10 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    Throughput,
+    Throughput {
+        #[arg(long)]
+        bench: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
