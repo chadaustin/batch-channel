@@ -53,6 +53,12 @@ struct State<T> {
     queue: VecDeque<T>,
 }
 
+impl<T> State<T> {
+    fn has_capacity(&self) -> bool {
+        self.queue.len() < self.target_capacity()
+    }
+}
+
 impl<T> std::ops::Deref for State<T> {
     type Target = StateBase;
 
@@ -410,7 +416,7 @@ impl<'a, T> Future for Send<'a, T> {
         if state.rx_dropped {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
-        if state.queue.len() < state.target_capacity() {
+        if state.has_capacity() {
             state.queue.push_back(self.as_mut().value.take().unwrap());
             self.sender.core.wake_all_rx(state);
             Poll::Ready(Ok(()))
@@ -453,7 +459,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             } else if state.rx_dropped {
                 // TODO: add a test for when receiver is dropped after iterator is drained
                 return Poll::Ready(Err(SendError(())));
-            } else if state.queue.len() < state.target_capacity() {
+            } else if state.has_capacity() {
                 state.queue.push_back(pi.next().unwrap());
             } else {
                 state.tx_wakers.push(cx.waker().clone());
