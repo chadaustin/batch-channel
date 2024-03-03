@@ -4,6 +4,8 @@ use std::future::Future;
 use std::time::Instant;
 
 trait Channel {
+    const HAS_BATCH: bool;
+
     type Sender<T: Send + 'static>: ChannelSender<T> + 'static;
     type Receiver<T: Send + 'static>: ChannelReceiver<T> + 'static;
 
@@ -11,6 +13,8 @@ trait Channel {
 }
 
 trait ChannelSync {
+    const HAS_BATCH: bool;
+
     type SyncSender<T: Send + 'static>: ChannelSyncSender<T> + 'static;
     type SyncReceiver<T: Send + 'static>: ChannelSyncReceiver<T> + 'static;
 
@@ -60,6 +64,8 @@ trait ChannelSyncReceiver<T>: Clone + Send {
 struct BatchChannel;
 
 impl Channel for BatchChannel {
+    const HAS_BATCH: bool = true;
+
     type Sender<T: Send + 'static> = batch_channel::Sender<T>;
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
@@ -69,6 +75,8 @@ impl Channel for BatchChannel {
 }
 
 impl ChannelSync for BatchChannel {
+    const HAS_BATCH: bool = true;
+
     type SyncSender<T: Send + 'static> = batch_channel::SyncSender<T>;
     type SyncReceiver<T: Send + 'static> = batch_channel::SyncReceiver<T>;
 
@@ -153,6 +161,8 @@ impl<T: Send> ChannelSyncReceiver<T> for batch_channel::SyncReceiver<T> {
 struct KanalChannel;
 
 impl Channel for KanalChannel {
+    const HAS_BATCH: bool = false;
+
     type Sender<T: Send + 'static> = kanal::AsyncSender<T>;
     type Receiver<T: Send + 'static> = kanal::AsyncReceiver<T>;
 
@@ -202,7 +212,52 @@ impl<T: Send> ChannelReceiver<T> for kanal::AsyncReceiver<T> {
                 };
                 vec.push(value);
             }
-            //eprintln!("end of recv_vec");
+        }
+    }
+}
+
+impl ChannelSync for KanalChannel {
+    const HAS_BATCH: bool = false;
+
+    type SyncSender<T: Send + 'static> = kanal::Sender<T>;
+    type SyncReceiver<T: Send + 'static> = kanal::Receiver<T>;
+
+    fn bounded_sync<T: Send + 'static>(
+        capacity: usize,
+    ) -> (Self::SyncSender<T>, Self::SyncReceiver<T>) {
+        kanal::bounded(capacity)
+    }
+}
+
+impl<T: Send> ChannelSyncSender<T> for kanal::Sender<T> {
+    type BatchSenderSync = kanal::Sender<T>;
+
+    fn autobatch<F>(mut self, _batch_limit: usize, f: F)
+    where
+        for<'a> F: FnOnce(&'a mut Self::BatchSenderSync),
+    {
+        f(&mut self);
+    }
+}
+
+impl<T: Send> ChannelBatchSenderSync<T> for kanal::Sender<T> {
+    fn send(&mut self, value: T) {
+        kanal::Sender::send(self, value).expect("in this benchmark, receiver never drops")
+    }
+}
+
+impl<T: Send> ChannelSyncReceiver<T> for kanal::Receiver<T> {
+    fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>) {
+        let Ok(value) = self.recv() else {
+            return;
+        };
+        vec.push(value);
+        // Now try to read the rest.
+        for _ in 0..element_limit {
+            let Ok(Some(value)) = self.try_recv() else {
+                return;
+            };
+            vec.push(value);
         }
     }
 }
@@ -227,7 +282,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     SpawnRx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
 {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1 * 1024 * 1024 * (if C::has_batch { options.batch_size } else { 1 });
+    let send_count: usize = 2 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::new();
@@ -292,7 +347,7 @@ where
     C: ChannelSync,
 {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1 * 1024 * 1024 * (if C::has_batch { options.batch_size } else { 1 });
+    let send_count: usize = 1 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::new();
@@ -384,6 +439,8 @@ fn main() {
             };
             print!("    batch-channel: ");
             benchmark_throughput_sync(BatchChannel, options);
+            print!("    kanal:         ");
+            benchmark_throughput_sync(KanalChannel, options);
         }
     }
 }
