@@ -1,6 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 mod fixture;
 use fixture::*;
 
@@ -203,16 +200,16 @@ fn batch_locally_accumulates() {
     let mut pool = LocalPool::new();
 
     let (tx, rx) = batch_channel::unbounded();
-    let read_values = Rc::new(RefCell::new(Vec::new()));
-    let read_values_outer = read_values.clone();
+    let read_values: StateVar<Vec<_>> = StateVar::default();
 
-    pool.spawn(async move {
-        while let Some(v) = rx.recv().await {
-            read_values.borrow_mut().push(v);
+    pool.spawn({
+        let read_values = read_values.clone();
+        async move {
+            while let Some(v) = rx.recv().await {
+                read_values.borrow_mut().push(v);
+            }
         }
     });
-
-    let read_values = read_values_outer;
 
     let mut tx = tx.into_sync().batch(2);
 
@@ -222,14 +219,14 @@ fn batch_locally_accumulates() {
 
     assert_eq!(Ok(()), tx.send(2));
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2], *read_values.borrow());
+    assert_eq!(vec![1, 2], read_values.get());
 
     assert_eq!(Ok(()), tx.send(3));
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2], *read_values.borrow());
+    assert_eq!(vec![1, 2], read_values.get());
     drop(tx);
     pool.run();
-    assert_eq!(vec![1, 2, 3], *read_values.borrow());
+    assert_eq!(vec![1, 2, 3], read_values.get());
 }
 
 #[test]
@@ -237,16 +234,16 @@ fn autobatch_locally_accumulates() {
     let mut pool = LocalPool::new();
 
     let (tx, rx) = batch_channel::unbounded();
-    let read_values = Rc::new(RefCell::new(Vec::new()));
-    let read_values_outer = read_values.clone();
+    let read_values: StateVar<Vec<_>> = StateVar::default();
 
-    pool.spawn(async move {
-        while let Some(v) = rx.recv().await {
-            read_values.borrow_mut().push(v);
+    pool.spawn({
+        let read_values = read_values.clone();
+        async move {
+            while let Some(v) = rx.recv().await {
+                read_values.borrow_mut().push(v);
+            }
         }
     });
-
-    let read_values = read_values_outer;
 
     tx.into_sync()
         .autobatch(2, |tx| {
@@ -256,11 +253,11 @@ fn autobatch_locally_accumulates() {
 
             assert_eq!(Ok(()), tx.send(2));
             pool.run_until_stalled();
-            assert_eq!(vec![1, 2], *read_values.borrow());
+            assert_eq!(vec![1, 2], read_values.get());
 
             assert_eq!(Ok(()), tx.send(3));
             pool.run_until_stalled();
-            assert_eq!(vec![1, 2], *read_values.borrow());
+            assert_eq!(vec![1, 2], read_values.get());
 
             Ok(())
         })
@@ -268,7 +265,7 @@ fn autobatch_locally_accumulates() {
 
     // autobatch drained
     pool.run();
-    assert_eq!(vec![1, 2, 3], *read_values.borrow());
+    assert_eq!(vec![1, 2, 3], read_values.get());
 }
 
 #[test]
@@ -276,12 +273,14 @@ fn batch_can_be_drained() {
     let mut pool = LocalPool::new();
 
     let (tx, rx) = batch_channel::unbounded();
-    let read_values = Rc::new(RefCell::new(Vec::new()));
+    let read_values: StateVar<Vec<_>> = StateVar::default();
 
-    let read_values_inner = read_values.clone();
-    pool.spawn(async move {
-        while let Some(v) = rx.recv().await {
-            read_values_inner.borrow_mut().push(v);
+    pool.spawn({
+        let read_values = read_values.clone();
+        async move {
+            while let Some(v) = rx.recv().await {
+                read_values.borrow_mut().push(v);
+            }
         }
     });
 
@@ -297,7 +296,7 @@ fn batch_can_be_drained() {
 
     assert_eq!(Ok(()), tx.drain());
     pool.run_until_stalled();
-    assert_eq!(vec![1, 2], *read_values.borrow());
+    assert_eq!(vec![1, 2], read_values.get());
 
     assert_eq!(Ok(()), tx.send(3));
     pool.run_until_stalled();
@@ -305,7 +304,7 @@ fn batch_can_be_drained() {
 
     drop(tx);
     pool.run();
-    assert_eq!(vec![1, 2, 3], *read_values.borrow());
+    assert_eq!(vec![1, 2, 3], read_values.get());
 }
 
 #[test]

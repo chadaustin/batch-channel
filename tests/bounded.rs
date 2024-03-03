@@ -32,25 +32,25 @@ fn recv_unblocks_send() {
     let mut pool = LocalPool::new();
     let (tx, rx) = batch_channel::bounded(1);
 
-    let state = Rc::new(RefCell::new(""));
+    let state = StateVar::new("");
 
     pool.spawn({
         let state = state.clone();
         async move {
-            *state.borrow_mut() = "sending";
+            state.set("sending");
             tx.send(10).await.unwrap();
-            *state.borrow_mut() = "sent 1";
+            state.set("sent 1");
             tx.send(20).await.unwrap();
-            *state.borrow_mut() = "sent 2";
+            state.set("sent 2");
         }
     });
 
     pool.run_until_stalled();
-    assert_eq!("sent 1", *state.borrow());
+    assert_eq!("sent 1", state.get());
     assert_eq!(Some(10), block_on(rx.recv()));
 
     pool.run_until_stalled();
-    assert_eq!("sent 2", *state.borrow());
+    assert_eq!("sent 2", state.get());
     assert_eq!(Some(20), block_on(rx.recv()));
 
     pool.run();

@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
+
 pub use futures::executor::block_on;
 pub use futures::executor::LocalPool;
 pub use futures::task::LocalSpawnExt;
@@ -24,3 +29,46 @@ impl TestPool for LocalPool {
         self.run_until(future)
     }
 }
+
+/// A mutable slot so asynchronous single-threaded tests can assert
+/// progress.
+#[derive(Clone, Debug)]
+pub struct StateVar<T>(Rc<RefCell<T>>);
+
+#[allow(dead_code)]
+impl<T> StateVar<T> {
+    pub fn new(init: T) -> Self {
+        Self(Rc::new(RefCell::new(init)))
+    }
+
+    pub fn set(&self, value: T) {
+        *self.0.borrow_mut() = value;
+    }
+
+    pub fn borrow(&self) -> std::cell::Ref<'_, T> {
+        self.0.borrow()
+    }
+
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, T> {
+        self.0.borrow_mut()
+    }
+}
+
+#[allow(dead_code)]
+impl<T: Clone> StateVar<T> {
+    pub fn get(&self) -> T {
+        self.0.borrow().clone()
+    }
+}
+
+#[allow(dead_code)]
+impl<T: Default> StateVar<T> {
+    pub fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
+/// A mutable, atomic slot so asynchronous tests can assert progress.
+#[derive(Clone, Debug)]
+// Could use crossbeam::AtomicCell
+pub struct AtomicVar<T>(Arc<Mutex<T>>);
