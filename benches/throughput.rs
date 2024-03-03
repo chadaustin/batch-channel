@@ -382,16 +382,7 @@ struct Options {
     rx_count: usize,
 }
 
-async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
-    _: C,
-    options: Options,
-    spawn_tx: SpawnTx,
-    spawn_rx: SpawnRx,
-) where
-    C: Channel,
-    SpawnTx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
-    SpawnRx: Fn(BoxFuture<'static, ()>) -> tokio::task::JoinHandle<()>,
-{
+async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) {
     const CAPACITY: usize = 65536;
     let send_count: usize = 2 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
@@ -404,7 +395,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     let (tx, rx) = C::bounded(CAPACITY);
     for task_id in 0..options.tx_count {
         let tx = tx.clone();
-        senders.push(spawn_tx(
+        senders.push(tokio::spawn(
             async move {
                 tx.autobatch(options.batch_size, move |tx| {
                     async move {
@@ -422,7 +413,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     drop(tx);
     for _ in 0..options.rx_count {
         let rx = rx.clone();
-        receivers.push(spawn_rx(
+        receivers.push(tokio::spawn(
             async move {
                 let mut batch = Vec::with_capacity(options.batch_size);
                 loop {
@@ -453,10 +444,7 @@ async fn benchmark_throughput_async<C, SpawnTx, SpawnRx>(
     );
 }
 
-fn benchmark_throughput_sync<C>(_: C, options: Options)
-where
-    C: ChannelSync,
-{
+fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) {
     const CAPACITY: usize = 65536;
     let send_count: usize = 1 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
@@ -524,26 +512,11 @@ fn main() {
                 rx_count,
             };
             print!("    batch-channel: ");
-            runtime.block_on(benchmark_throughput_async(
-                BatchChannel,
-                options,
-                |f| runtime.spawn(f),
-                |f| runtime.spawn(f),
-            ));
+            runtime.block_on(benchmark_throughput_async(BatchChannel, options));
             print!("    kanal:         ");
-            runtime.block_on(benchmark_throughput_async(
-                KanalChannel,
-                options,
-                |f| runtime.spawn(f),
-                |f| runtime.spawn(f),
-            ));
+            runtime.block_on(benchmark_throughput_async(KanalChannel, options));
             print!("    async-channel: ");
-            runtime.block_on(benchmark_throughput_async(
-                AsyncChannel,
-                options,
-                |f| runtime.spawn(f),
-                |f| runtime.spawn(f),
-            ));
+            runtime.block_on(benchmark_throughput_async(AsyncChannel, options));
         }
 
         println!();
