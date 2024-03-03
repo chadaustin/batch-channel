@@ -124,12 +124,16 @@ impl<T> splitrc::Notify for Core<T> {
     fn last_tx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
         state.closed = true;
+        // We cannot deallocate the queue, as remaining receivers can
+        // drain it.
         self.wake_all_rx(state);
     }
 
     fn last_rx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
         state.closed = true;
+        // TODO: deallocate
+        state.queue.clear();
         self.wake_all_tx(state);
     }
 }
