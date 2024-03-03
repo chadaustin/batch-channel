@@ -269,6 +269,34 @@ fn send_empty_iter_immediately_returns_even_if_rx_is_dropped() {
 }
 
 #[test]
+fn send_iter_completes_if_there_is_just_enough_capacity() {
+    let mut pool = LocalPool::new();
+    let state = Arc::new(Mutex::new(""));
+    let (tx, rx) = batch_channel::bounded(2);
+    pool.spawn({
+        let state = state.clone();
+        async move {
+            *state.lock().unwrap() = "1";
+            tx.send_iter([1, 2]).await.unwrap();
+            *state.lock().unwrap() = "2";
+        }
+    });
+
+    pool.spawn({
+        let state = state.clone();
+        async move {
+            assert_eq!("2", *state.lock().unwrap());
+            assert_eq!(Some(1), rx.recv().await);
+            assert_eq!(Some(2), rx.recv().await);
+            *state.lock().unwrap() = "3";
+        }
+    });
+
+    pool.run();
+    assert_eq!("3", *state.lock().unwrap());
+}
+
+#[test]
 fn sender_and_receiver_of_noncloneable_can_clone() {
     struct NoClone;
     let (tx, rx) = batch_channel::bounded::<NoClone>(1);
