@@ -1,6 +1,10 @@
+use clap::Parser;
+use clap::Subcommand;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use lazy_static::lazy_static;
 use std::future::Future;
+use std::time::Duration;
 use std::time::Instant;
 
 trait Channel {
@@ -382,7 +386,18 @@ struct Options {
     rx_count: usize,
 }
 
-async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) {
+struct Timings {
+    total: Duration,
+    per_item: Duration,
+}
+
+impl Timings {
+    fn print(&self) {
+        println!("{:?}, {:?} per item", self.total, self.per_item,)
+    }
+}
+
+async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
     let send_count: usize = 2 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
@@ -437,14 +452,13 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) {
     }
 
     let elapsed = now.elapsed();
-    println!(
-        "{:?}, {:?} per item",
-        elapsed,
-        elapsed / (total_items as u32)
-    );
+    Timings {
+        total: elapsed,
+        per_item: elapsed / (total_items as u32),
+    }
 }
 
-fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) {
+fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
     let send_count: usize = 1 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
@@ -486,11 +500,44 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) {
     }
 
     let elapsed = now.elapsed();
-    println!(
-        "{:?}, {:?} per item",
-        elapsed,
-        elapsed / (total_items as u32)
-    );
+    Timings {
+        total: elapsed,
+        per_item: elapsed / (total_items as u32),
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Throughput,
+}
+
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(long)]
+    bench: bool,
+
+    #[arg(long)]
+    csv: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+struct ParsedArgs {
+    csv: bool,
+}
+
+impl ParsedArgs {
+    fn parse() -> ParsedArgs {
+        //eprintln!("{:?}", std::env::args());
+        ParsedArgs {
+            csv: Args::parse().csv,
+        }
+    }
+}
+
+lazy_static! {
+    static ref ARGS: ParsedArgs = ParsedArgs::parse();
 }
 
 fn main() {
@@ -501,45 +548,78 @@ fn main() {
 
     let batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 
-    fn bench_async<C: Channel>(
-        runtime: &tokio::runtime::Runtime,
-        name: &str,
-        options: Options,
-        channel: C,
-    ) {
-        print!("    {: <13}: ", name);
-        runtime.block_on(benchmark_throughput_async(channel, options));
+    async fn bench_async<C: Channel>(name: &str, options: Options, channel: C) {
+        if !ARGS.csv {
+            print!("    {: <13}: ", name);
+        }
+        let timings = benchmark_throughput_async(channel, options).await;
+        if ARGS.csv {
+            println!(
+                "async,{},{},{},{},{},{}",
+                name,
+                options.tx_count,
+                options.rx_count,
+                options.batch_size,
+                timings.total.as_nanos(),
+                timings.per_item.as_nanos()
+            );
+        } else {
+            timings.print();
+        }
     }
 
-    fn bench_sync<C: ChannelSync>(
-        name: &str,
-        options: Options,
-        channel: C,
-    ) {
-        print!("    {: <13}: ", name);
-        benchmark_throughput_sync(channel, options);
+    fn bench_sync<C: ChannelSync>(name: &str, options: Options, channel: C) {
+        if !ARGS.csv {
+            print!("    {: <13}: ", name);
+        }
+        let timings = benchmark_throughput_sync(channel, options);
+        if ARGS.csv {
+            println!(
+                "sync,{},{},{},{},{},{}",
+                name,
+                options.tx_count,
+                options.rx_count,
+                options.batch_size,
+                timings.total.as_nanos(),
+                timings.per_item.as_nanos()
+            );
+        } else {
+            timings.print();
+        }
+    }
+
+    if ARGS.csv {
+        println!("mode,channel,tx,rx,batch_size,total_ns,per_item_ns");
     }
 
     for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
-        println!();
-        println!("throughput async (tx={} rx={})", tx_count, rx_count);
+        if !ARGS.csv {
+            println!();
+            println!("throughput async (tx={} rx={})", tx_count, rx_count);
+        }
         for batch_size in batch_sizes {
-            println!("  batch={}", batch_size);
+            if !ARGS.csv {
+                println!("  batch={}", batch_size);
+            }
             let options = Options {
                 batch_size,
                 tx_count,
                 rx_count,
             };
 
-            bench_async(&runtime, "batch-channel", options, BatchChannel);
-            bench_async(&runtime, "kanal", options, KanalChannel);
-            bench_async(&runtime, "async-channel", options, AsyncChannel);
+            runtime.block_on(bench_async("batch-channel", options, BatchChannel));
+            runtime.block_on(bench_async("kanal", options, KanalChannel));
+            runtime.block_on(bench_async("async-channel", options, AsyncChannel));
         }
 
-        println!();
-        println!("throughput sync (tx={} rx={})", tx_count, rx_count);
+        if !ARGS.csv {
+            println!();
+            println!("throughput sync (tx={} rx={})", tx_count, rx_count);
+        }
         for batch_size in batch_sizes {
-            println!("  batch={}", batch_size);
+            if !ARGS.csv {
+                println!("  batch={}", batch_size);
+            }
             let options = Options {
                 batch_size,
                 tx_count,
