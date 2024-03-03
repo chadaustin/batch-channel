@@ -33,8 +33,9 @@ macro_rules! derive_clone {
 #[derive(Debug)]
 struct StateBase {
     capacity: usize,
-    tx_dropped: bool,
-    rx_dropped: bool,
+    closed: bool,
+    // An intrusive linked list through the futures would also work
+    // and avoid allocation here.
     tx_wakers: Vec<Waker>,
     rx_wakers: Vec<Waker>,
 }
@@ -93,7 +94,7 @@ impl<T> Core<T> {
         // condvar must be notified.
         let not_empty = self.not_empty.get_or_init(Default::default);
         not_empty
-            .wait_while(state, |s| !s.tx_dropped && s.queue.is_empty())
+            .wait_while(state, |s| !s.closed && s.queue.is_empty())
             .unwrap()
     }
 
@@ -122,13 +123,13 @@ impl<T> Core<T> {
 impl<T> splitrc::Notify for Core<T> {
     fn last_tx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
-        state.tx_dropped = true;
+        state.closed = true;
         self.wake_all_rx(state);
     }
 
     fn last_rx_did_drop(&self) {
         let mut state = self.state.lock().unwrap();
-        state.rx_dropped = true;
+        state.closed = true;
         self.wake_all_tx(state);
     }
 }
@@ -171,7 +172,7 @@ impl<T> SyncSender<T> {
     /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_dropped {
+        if state.closed {
             assert!(state.queue.is_empty());
             return Err(SendError(value));
         }
@@ -196,7 +197,7 @@ impl<T> SyncSender<T> {
         I: IntoIterator<Item = T>,
     {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_dropped {
+        if state.closed {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
         }
@@ -218,7 +219,7 @@ impl<T> SyncSender<T> {
     /// the same capacity it had.
     pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
         let mut state = self.core.state.lock().unwrap();
-        if state.rx_dropped {
+        if state.closed {
             assert!(state.queue.is_empty());
             return Err(SendError(values));
         }
@@ -413,7 +414,7 @@ impl<'a, T> Future for Send<'a, T> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.sender.core.state.lock().unwrap();
-        if state.rx_dropped {
+        if state.closed {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
         if state.has_capacity() {
@@ -456,7 +457,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                 // iterator, but that's unlikely. We probably sent a message in this loop.
                 self.sender.core.wake_all_rx(state);
                 return Poll::Ready(Ok(()));
-            } else if state.rx_dropped {
+            } else if state.closed {
                 return Poll::Ready(Err(SendError(())));
             } else if state.has_capacity() {
                 state.queue.push_back(pi.next().unwrap());
@@ -526,7 +527,7 @@ impl<'a, T> Future for Recv<'a, T> {
                 Poll::Ready(Some(value))
             }
             None => {
-                if state.tx_dropped {
+                if state.closed {
                     Poll::Ready(None)
                 } else {
                     state.rx_wakers.push(cx.waker().clone());
@@ -553,7 +554,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            if state.tx_dropped {
+            if state.closed {
                 return Poll::Ready(Vec::new());
             } else {
                 state.rx_wakers.push(cx.waker().clone());
@@ -585,7 +586,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            if state.tx_dropped {
+            if state.closed {
                 assert!(self.vec.is_empty());
                 return Poll::Ready(());
             } else {
@@ -684,7 +685,7 @@ impl<T> SyncReceiver<T> {
                 Some(value)
             }
             None => {
-                assert!(state.tx_dropped);
+                assert!(state.closed);
                 None
             }
         }
@@ -702,7 +703,7 @@ impl<T> SyncReceiver<T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            assert!(state.tx_dropped);
+            assert!(state.closed);
             return Vec::new();
         }
 
@@ -729,7 +730,7 @@ impl<T> SyncReceiver<T> {
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
-            assert!(state.tx_dropped);
+            assert!(state.closed);
             // The result vector is already cleared.
             return;
         }
@@ -753,8 +754,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
         state: Mutex::new(State {
             base: StateBase {
                 capacity,
-                tx_dropped: false,
-                rx_dropped: false,
+                closed: false,
                 tx_wakers: Vec::new(),
                 rx_wakers: Vec::new(),
             },
@@ -784,8 +784,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         state: Mutex::new(State {
             base: StateBase {
                 capacity: UNBOUNDED_CAPACITY,
-                tx_dropped: false,
-                rx_dropped: false,
+                closed: false,
                 tx_wakers: Vec::new(),
                 rx_wakers: Vec::new(),
             },
