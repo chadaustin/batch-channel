@@ -262,6 +262,57 @@ impl<T: Send> ChannelSyncReceiver<T> for kanal::Receiver<T> {
     }
 }
 
+// Crossbeam
+
+struct CrossbeamChannel;
+
+impl ChannelSync for CrossbeamChannel {
+    const HAS_BATCH: bool = false;
+
+    type SyncSender<T: Send + 'static> = crossbeam::channel::Sender<T>;
+    type SyncReceiver<T: Send + 'static> = crossbeam::channel::Receiver<T>;
+
+    fn bounded_sync<T: Send + 'static>(
+        capacity: usize,
+    ) -> (Self::SyncSender<T>, Self::SyncReceiver<T>) {
+        crossbeam::channel::bounded(capacity)
+    }
+}
+
+impl<T: Send> ChannelSyncSender<T> for crossbeam::channel::Sender<T> {
+    type BatchSenderSync = crossbeam::channel::Sender<T>;
+
+    fn autobatch<F>(mut self, _batch_limit: usize, f: F)
+    where
+        for<'a> F: FnOnce(&'a mut Self::BatchSenderSync),
+    {
+        f(&mut self);
+    }
+}
+
+impl<T: Send> ChannelBatchSenderSync<T> for crossbeam::channel::Sender<T> {
+    fn send(&mut self, value: T) {
+        crossbeam::channel::Sender::send(self, value)
+            .expect("in this benchmark, receiver never drops")
+    }
+}
+
+impl<T: Send> ChannelSyncReceiver<T> for crossbeam::channel::Receiver<T> {
+    fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>) {
+        let Ok(value) = self.recv() else {
+            return;
+        };
+        vec.push(value);
+        // Now try to read the rest.
+        for _ in 0..element_limit {
+            let Ok(value) = self.try_recv() else {
+                return;
+            };
+            vec.push(value);
+        }
+    }
+}
+
 // Benchmark
 
 #[derive(Copy, Clone)]
@@ -441,6 +492,8 @@ fn main() {
             benchmark_throughput_sync(BatchChannel, options);
             print!("    kanal:         ");
             benchmark_throughput_sync(KanalChannel, options);
+            print!("    crossbeam:     ");
+            benchmark_throughput_sync(CrossbeamChannel, options);
         }
     }
 }
