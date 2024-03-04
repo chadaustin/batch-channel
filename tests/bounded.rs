@@ -2,8 +2,6 @@
 
 use batch_channel::SendError;
 use futures::FutureExt;
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -61,25 +59,25 @@ fn recv_batch_unblocks_send() {
     let mut pool = LocalPool::new();
     let (tx, rx) = batch_channel::bounded(1);
 
-    let state = Rc::new(RefCell::new(""));
+    let state = StateVar::new("");
 
     pool.spawn({
         let state = state.clone();
         async move {
-            *state.borrow_mut() = "sending";
+            state.set("sending");
             tx.send(10).await.unwrap();
-            *state.borrow_mut() = "sent 1";
+            state.set("sent 1");
             tx.send(20).await.unwrap();
-            *state.borrow_mut() = "sent 2";
+            state.set("sent 2");
         }
     });
 
     pool.run_until_stalled();
-    assert_eq!("sent 1", *state.borrow());
+    assert_eq!("sent 1", state.get());
     assert_eq!(vec![10], block_on(rx.recv_batch(5)));
 
     pool.run_until_stalled();
-    assert_eq!("sent 2", *state.borrow());
+    assert_eq!("sent 2", state.get());
     assert_eq!(vec![20], block_on(rx.recv_batch(5)));
 
     pool.run();
@@ -90,27 +88,27 @@ fn recv_vec_unblocks_send() {
     let mut pool = LocalPool::new();
     let (tx, rx) = batch_channel::bounded(1);
 
-    let state = Rc::new(RefCell::new(""));
+    let state = StateVar::new("");
 
     pool.spawn({
         let state = state.clone();
         async move {
-            *state.borrow_mut() = "sending";
+            state.set("sending");
             tx.send(10).await.unwrap();
-            *state.borrow_mut() = "sent 1";
+            state.set("sent 1");
             tx.send(20).await.unwrap();
-            *state.borrow_mut() = "sent 2";
+            state.set("sent 2");
         }
     });
 
     pool.run_until_stalled();
-    assert_eq!("sent 1", *state.borrow());
+    assert_eq!("sent 1", state.get());
     let mut batch = Vec::new();
     block_on(rx.recv_vec(5, &mut batch));
     assert_eq!(vec![10], batch);
 
     pool.run_until_stalled();
-    assert_eq!("sent 2", *state.borrow());
+    assert_eq!("sent 2", state.get());
     block_on(rx.recv_vec(5, &mut batch));
     assert_eq!(vec![20], batch);
 
