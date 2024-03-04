@@ -293,6 +293,40 @@ fn send_iter_completes_if_there_is_just_enough_capacity() {
 }
 
 #[test]
+fn send_iter_wakes_receivers_if_it_hits_capacity() {
+    let mut pool = LocalPool::new();
+    let reader_state = AtomicVar::new("");
+    let writer_state = AtomicVar::new("");
+    let (tx, rx) = batch_channel::bounded(2);
+    pool.spawn({
+        let reader_state = reader_state.clone();
+        async move {
+            reader_state.set("a");
+            assert_eq!(Some(1), rx.recv().await);
+            reader_state.set("b");
+            assert_eq!(Some(2), rx.recv().await);
+            reader_state.set("c");
+            assert_eq!(Some(3), rx.recv().await);
+            reader_state.set("d");
+            assert_eq!(None, rx.recv().await);
+            reader_state.set("e");
+        }
+    });
+    pool.spawn({
+        let writer_state = writer_state.clone();
+        async move {
+            writer_state.set("1");
+            tx.send_iter([1, 2, 3]).await.unwrap();
+            writer_state.set("2");
+        }
+    });
+
+    pool.run();
+    assert_eq!("e", reader_state.get());
+    assert_eq!("2", writer_state.get());
+}
+
+#[test]
 fn sender_and_receiver_of_noncloneable_can_clone() {
     struct NoClone;
     let (tx, rx) = batch_channel::bounded::<NoClone>(1);
