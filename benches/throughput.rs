@@ -402,8 +402,8 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
     let send_count: usize = 2 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
-    let mut senders = Vec::new();
-    let mut receivers = Vec::new();
+    let mut senders = Vec::with_capacity(options.tx_count);
+    let mut receivers = Vec::with_capacity(options.rx_count);
 
     let now = Instant::now();
 
@@ -463,8 +463,8 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     let send_count: usize = 1 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
     let total_items = send_count * options.tx_count;
 
-    let mut senders = Vec::new();
-    let mut receivers = Vec::new();
+    let mut senders = Vec::with_capacity(options.tx_count);
+    let mut receivers = Vec::with_capacity(options.rx_count);
 
     let now = Instant::now();
 
