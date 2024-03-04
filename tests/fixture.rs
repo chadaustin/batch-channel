@@ -1,12 +1,11 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::Mutex;
-
 pub use futures::executor::block_on;
 pub use futures::executor::LocalPool;
 pub use futures::task::LocalSpawnExt;
 use futures::Future;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub trait TestPool {
     fn spawn<F: Future<Output = ()> + 'static>(&self, future: F);
@@ -72,3 +71,21 @@ impl<T: Default> StateVar<T> {
 #[derive(Clone, Debug)]
 // Could use crossbeam::AtomicCell
 pub struct AtomicVar<T>(Arc<Mutex<T>>);
+
+#[allow(dead_code)]
+impl<T> AtomicVar<T> {
+    pub fn new(init: T) -> Self {
+        Self(Arc::new(Mutex::new(init)))
+    }
+
+    pub fn set(&self, value: T) {
+        *self.0.lock().unwrap() = value;
+    }
+}
+
+#[allow(dead_code)]
+impl<T: Clone> AtomicVar<T> {
+    pub fn get(&self) -> T {
+        self.0.lock().unwrap().clone()
+    }
+}

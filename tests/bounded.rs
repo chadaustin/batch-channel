@@ -2,8 +2,6 @@
 
 use batch_channel::SendError;
 use futures::FutureExt;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 mod fixture;
 use fixture::*;
@@ -148,22 +146,22 @@ fn send_batch_blocks_as_needed() {
 #[test]
 fn autobatch_batches() {
     let mut pool = LocalPool::new();
-    let state = Arc::new(Mutex::new(""));
+    let state = AtomicVar::new("");
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
     pool.spawn(async move {
         tx.autobatch(2, move |tx| {
             async move {
-                *inner.lock().unwrap() = "0";
+                inner.set("0");
                 tx.send(1).await?;
-                *inner.lock().unwrap() = "1";
+                inner.set("1");
                 tx.send(2).await?;
-                *inner.lock().unwrap() = "2";
+                inner.set("2");
                 tx.send(3).await?;
-                *inner.lock().unwrap() = "3";
+                inner.set("3");
                 tx.send(4).await?;
-                *inner.lock().unwrap() = "4";
+                inner.set("4");
                 Ok(())
             }
             .boxed()
@@ -173,48 +171,48 @@ fn autobatch_batches() {
     });
 
     pool.run_until_stalled();
-    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!("1", state.get());
     assert_eq!(Some(1), pool.run_until(rx.recv()));
-    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!("1", state.get());
     assert_eq!(Some(2), pool.run_until(rx.recv()));
-    assert_eq!("3", *state.lock().unwrap());
+    assert_eq!("3", state.get());
     assert_eq!(Some(3), pool.run_until(rx.recv()));
-    assert_eq!("3", *state.lock().unwrap());
+    assert_eq!("3", state.get());
     assert_eq!(Some(4), pool.run_until(rx.recv()));
-    assert_eq!("4", *state.lock().unwrap());
+    assert_eq!("4", state.get());
     assert_eq!(None, pool.run_until(rx.recv()));
 }
 
 #[test]
 fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
     let mut pool = LocalPool::new();
-    let state = Arc::new(Mutex::new(""));
+    let state = AtomicVar::new("");
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
     pool.spawn(tx.autobatch_or_cancel(2, move |tx| {
         async move {
-            *inner.lock().unwrap() = "0";
+            inner.set("0");
             tx.send(1).await?;
-            *inner.lock().unwrap() = "1";
+            inner.set("1");
             tx.send(2).await?;
-            *inner.lock().unwrap() = "2";
+            inner.set("2");
             tx.send(3).await?;
-            *inner.lock().unwrap() = "3";
+            inner.set("3");
             tx.send(4).await?;
-            *inner.lock().unwrap() = "4";
+            inner.set("4");
             Ok(())
         }
         .boxed()
     }));
 
     pool.run_until_stalled();
-    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!("1", state.get());
     assert_eq!(Some(1), pool.run_until(rx.recv()));
-    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!("1", state.get());
     drop(rx);
     pool.run_until_stalled();
-    assert_eq!("1", *state.lock().unwrap());
+    assert_eq!("1", state.get());
 }
 
 #[test]
@@ -232,28 +230,28 @@ fn clone_bounded_sender() {
 #[test]
 fn send_empty_iter_immediately_returns() {
     let mut pool = LocalPool::new();
-    let state = Arc::new(Mutex::new(""));
+    let state = AtomicVar::new("");
     let (tx, rx) = batch_channel::bounded::<()>(1);
     pool.spawn({
         let state = state.clone();
         async move {
-            *state.lock().unwrap() = "1";
+            state.set("1");
             tx.send_iter([]).await.unwrap();
-            *state.lock().unwrap() = "2";
+            state.set("2");
         }
     });
 
     pool.spawn({
         let state = state.clone();
         async move {
-            assert_eq!("2", *state.lock().unwrap());
+            assert_eq!("2", state.get());
             assert_eq!(None, rx.recv().await);
-            *state.lock().unwrap() = "3";
+            state.set("3");
         }
     });
 
     pool.run();
-    assert_eq!("3", *state.lock().unwrap());
+    assert_eq!("3", state.get());
 }
 
 #[test]
@@ -269,29 +267,29 @@ fn send_empty_iter_immediately_returns_even_if_rx_is_dropped() {
 #[test]
 fn send_iter_completes_if_there_is_just_enough_capacity() {
     let mut pool = LocalPool::new();
-    let state = Arc::new(Mutex::new(""));
+    let state = AtomicVar::new("");
     let (tx, rx) = batch_channel::bounded(2);
     pool.spawn({
         let state = state.clone();
         async move {
-            *state.lock().unwrap() = "1";
+            state.set("1");
             tx.send_iter([1, 2]).await.unwrap();
-            *state.lock().unwrap() = "2";
+            state.set("2");
         }
     });
 
     pool.spawn({
         let state = state.clone();
         async move {
-            assert_eq!("2", *state.lock().unwrap());
+            assert_eq!("2", state.get());
             assert_eq!(Some(1), rx.recv().await);
             assert_eq!(Some(2), rx.recv().await);
-            *state.lock().unwrap() = "3";
+            state.set("3");
         }
     });
 
     pool.run();
-    assert_eq!("3", *state.lock().unwrap());
+    assert_eq!("3", state.get());
 }
 
 #[test]
