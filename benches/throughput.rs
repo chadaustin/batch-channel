@@ -552,24 +552,19 @@ struct Args {
     command: Option<Commands>,
 }
 
-struct ParsedArgs {
-    csv: bool,
-}
-
-impl ParsedArgs {
-    fn parse() -> ParsedArgs {
-        //eprintln!("{:?}", std::env::args());
-        ParsedArgs {
-            csv: Args::parse().csv,
-        }
-    }
-}
-
 lazy_static! {
-    static ref ARGS: ParsedArgs = ParsedArgs::parse();
+    static ref ARGS: Args = Args::parse();
 }
 
 fn main() {
+    match ARGS.command {
+        Some(Commands::Throughput { .. }) => (),
+        None => (),
+        _ => {
+            return;
+        }
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .build()
