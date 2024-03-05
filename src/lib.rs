@@ -222,20 +222,10 @@ impl<T> SyncSender<T> {
     /// sends. The `values` vector is drained, and then returned with
     /// the same capacity it had.
     pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
-        let mut state = self.core.state.lock().unwrap();
-        if state.closed {
-            assert!(state.queue.is_empty());
-            return Err(SendError(values));
+        match self.send_iter(values.drain(..)) {
+            r @ Ok(_) => { drop(r); Ok(values) }
+            r @ Err(_) => { drop(r); Err(SendError(values)) }
         }
-
-        state.queue.extend(values.drain(..));
-
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        self.core.wake_all_rx(state);
-
-        Ok(values)
     }
 
     /// Converts this into a [SyncBatchSender] with the specified
