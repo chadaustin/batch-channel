@@ -82,6 +82,7 @@ struct Core<T> {
     // accessed while the lock is held. Alas, Rust does not allow
     // Condvar to be stored under the Mutex.
     not_empty: OnceLock<Condvar>,
+    not_full: OnceLock<Condvar>,
 }
 
 impl<T> Core<T> {
@@ -98,9 +99,37 @@ impl<T> Core<T> {
             .unwrap()
     }
 
+    /// Returns when there is either room in the queue or all receivers
+    /// are dropped.
+    fn block_until_not_full(&self) -> MutexGuard<'_, State<T>> {
+        let state = self.state.lock().unwrap();
+        self.wait_until_not_full(state)
+    }
+
+    /// Returns when there is either room in the queue or all receivers
+    /// are dropped.
+    fn wait_until_not_full<'a>(&self, state: MutexGuard<'a, State<T>>) -> MutexGuard<'a, State<T>> {
+        // Initialize the condvar while the lock is held. Thus, the
+        // caller can, while the lock is held, check whether the
+        // condvar must be notified.
+        let not_full = self.not_full.get_or_init(Default::default);
+        not_full
+            .wait_while(state, |s| !s.closed && !s.has_capacity())
+            .unwrap()
+    }
+
     fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
+        // The lock is held. Therefore, we know whether a Condvar must be notified or not.
+        let cvar = self.not_full.get();
         let wakers = std::mem::take(&mut state.tx_wakers);
         drop(state);
+        if let Some(cvar) = cvar {
+            // TODO: There are situations where we may know that we can get away with notify_one(), but
+            cvar.notify_all();
+        }
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
         for waker in wakers {
             waker.wake();
         }
@@ -114,6 +143,9 @@ impl<T> Core<T> {
         if let Some(cvar) = cvar {
             cvar.notify_all();
         }
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
         for waker in wakers {
             waker.wake();
         }
@@ -175,7 +207,7 @@ impl<T> SyncSender<T> {
     ///
     /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        let mut state = self.core.state.lock().unwrap();
+        let mut state = self.core.block_until_not_full();
         if state.closed {
             assert!(state.queue.is_empty());
             return Err(SendError(value));
@@ -183,11 +215,7 @@ impl<T> SyncSender<T> {
 
         state.queue.push_back(value);
 
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
         self.core.wake_all_rx(state);
-
         Ok(())
     }
 
@@ -200,20 +228,53 @@ impl<T> SyncSender<T> {
     where
         I: IntoIterator<Item = T>,
     {
-        let mut state = self.core.state.lock().unwrap();
-        if state.closed {
-            assert!(state.queue.is_empty());
-            return Err(SendError(()));
+        let mut values = values.into_iter();
+
+        // If the iterator is empty, we can avoid acquiring the lock.
+        let Some(mut value) = values.next() else {
+            return Ok(());
+        };
+
+        let mut state = self.core.block_until_not_full();
+        loop {
+            if state.closed {
+                // We may have sent some values, but the receivers are
+                // all dropped, and that cleared the queue.
+                assert!(state.queue.is_empty());
+                return Err(SendError(()));
+            }
+
+            debug_assert!(state.has_capacity());
+            state.queue.push_back(value);
+            while state.has_capacity() {
+                match values.next() {
+                    Some(value) => {
+                        state.queue.push_back(value);
+                    }
+                    None => {
+                        // Done pulling from the iterator and still
+                        // have capacity, so we're done.
+                        self.core.wake_all_rx(state);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // We are out of capacity. If we're done, we can return
+            // now without blocking.
+            value = match values.next() {
+                Some(v) => v,
+                None => {
+                    // Done pulling from the iterator and still
+                    // have capacity, so we're done.
+                    self.core.wake_all_rx(state);
+                    return Ok(());
+                }
+            };
+
+            // Otherwise, block and send when there is more capacity.
+            state = self.core.wait_until_not_full(state);
         }
-
-        state.queue.extend(values);
-
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        self.core.wake_all_rx(state);
-
-        Ok(())
     }
 
     /// Drain a [Vec] into the channel without deallocating it.
@@ -787,6 +848,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             queue: VecDeque::new(),
         }),
         not_empty: OnceLock::new(),
+        not_full: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
     (Sender { core: core_tx }, Receiver { core: core_rx })
@@ -817,6 +879,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
             queue: VecDeque::new(),
         }),
         not_empty: OnceLock::new(),
+        not_full: OnceLock::new(),
     };
     let (core_tx, core_rx) = splitrc::new(core);
     (Sender { core: core_tx }, Receiver { core: core_rx })
