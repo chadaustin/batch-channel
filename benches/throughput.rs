@@ -538,6 +538,10 @@ enum Commands {
         #[arg(long)]
         bench: bool,
     },
+    Uncontended {
+        #[arg(long)]
+        bench: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
