@@ -103,12 +103,37 @@ impl<T> Core<T> {
     /// are dropped.
     fn block_until_not_full(&self) -> MutexGuard<'_, State<T>> {
         let state = self.state.lock().unwrap();
-        self.wait_until_not_full(state)
+        // Initialize the condvar while the lock is held. Thus, the
+        // caller can, while the lock is held, check whether the
+        // condvar must be notified.
+        let not_full = self.not_full.get_or_init(Default::default);
+        not_full
+            .wait_while(state, |s| !s.closed && !s.has_capacity())
+            .unwrap()
     }
 
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
-    fn wait_until_not_full<'a>(&self, state: MutexGuard<'a, State<T>>) -> MutexGuard<'a, State<T>> {
+    fn wake_rx_and_block_not_full<'a>(
+        &self,
+        mut state: MutexGuard<'a, State<T>>,
+    ) -> MutexGuard<'a, State<T>> {
+        // The lock is held. Therefore, we know whether a Condvar must
+        // be notified or not. Unfortunately, since we aren't dropping
+        // the mutex unless the `not_full` condition variable below is not
+        // satisfied, we cannot notify `not_empty` outside of the lock.
+        if let Some(not_empty) = self.not_empty.get() {
+            not_empty.notify_all();
+        }
+
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        // TODO: keep the rx_wakers allocation somehow
+        for waker in std::mem::take(&mut state.rx_wakers) {
+            waker.wake();
+        }
+
         // Initialize the condvar while the lock is held. Thus, the
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
@@ -121,6 +146,7 @@ impl<T> Core<T> {
     fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_full.get();
+        // TODO: keep the tx_wakers allocation somehow
         let wakers = std::mem::take(&mut state.tx_wakers);
         drop(state);
         if let Some(cvar) = cvar {
@@ -138,6 +164,7 @@ impl<T> Core<T> {
     fn wake_all_rx(&self, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
+        // TODO: keep the rx_wakers allocation somehow
         let wakers = std::mem::take(&mut state.rx_wakers);
         drop(state);
         if let Some(cvar) = cvar {
@@ -236,7 +263,7 @@ impl<T> SyncSender<T> {
         };
 
         let mut state = self.core.block_until_not_full();
-        loop {
+        'outer: loop {
             if state.closed {
                 // We may have sent some values, but the receivers are
                 // all dropped, and that cleared the queue.
@@ -246,34 +273,28 @@ impl<T> SyncSender<T> {
 
             debug_assert!(state.has_capacity());
             state.queue.push_back(value);
-            while state.has_capacity() {
+            loop {
                 match values.next() {
-                    Some(value) => {
-                        state.queue.push_back(value);
+                    Some(v) => {
+                        if state.has_capacity() {
+                            state.queue.push_back(v);
+                        } else {
+                            value = v;
+                            // We're about to block, but we know we
+                            // sent at least one value, so wake any
+                            // waiters.
+                            state = self.core.wake_rx_and_block_not_full(state);
+                            continue 'outer;
+                        }
                     }
                     None => {
-                        // Done pulling from the iterator and still
-                        // have capacity, so we're done.
+                        // Done pulling from the iterator and know we
+                        // sent at least one value.
                         self.core.wake_all_rx(state);
                         return Ok(());
                     }
                 }
             }
-
-            // We are out of capacity. If we're done, we can return
-            // now without blocking.
-            value = match values.next() {
-                Some(v) => v,
-                None => {
-                    // Done pulling from the iterator and still
-                    // have capacity, so we're done.
-                    self.core.wake_all_rx(state);
-                    return Ok(());
-                }
-            };
-
-            // Otherwise, block and send when there is more capacity.
-            state = self.core.wait_until_not_full(state);
         }
     }
 
