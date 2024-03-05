@@ -135,7 +135,7 @@ fn send_iter_array() {
     let tx = tx.into_sync();
     drop(rx);
     assert_eq!(
-        Err(batch_channel::SendError(["foo", "bar", "baz"])),
+        Err(batch_channel::SendError(())),
         tx.send_iter(["foo", "bar", "baz"])
     );
 }

@@ -193,17 +193,17 @@ impl<T> SyncSender<T> {
 
     /// Send multiple values.
     ///
-    /// If all receivers are dropped, the values are returned in
-    /// [SendError] untouched. Either the entire batch is sent or none
-    /// of it is sent.
-    pub fn send_iter<I>(&self, values: I) -> Result<(), SendError<I>>
+    /// If all receivers are dropped, SendError is returned. The
+    /// values cannot be returned, as they may have been partially
+    /// sent when the channel is closed.
+    pub fn send_iter<I>(&self, values: I) -> Result<(), SendError<()>>
     where
         I: IntoIterator<Item = T>,
     {
         let mut state = self.core.state.lock().unwrap();
         if state.closed {
             assert!(state.queue.is_empty());
-            return Err(SendError(values));
+            return Err(SendError(()));
         }
 
         state.queue.extend(values);
@@ -223,8 +223,8 @@ impl<T> SyncSender<T> {
     /// the same capacity it had.
     pub fn send_vec(&self, mut values: Vec<T>) -> Result<Vec<T>, SendError<Vec<T>>> {
         match self.send_iter(values.drain(..)) {
-            r @ Ok(_) => { drop(r); Ok(values) }
-            r @ Err(_) => { drop(r); Err(SendError(values)) }
+            Ok(_) => Ok(values),
+            Err(_) => Err(SendError(values)),
         }
     }
 
