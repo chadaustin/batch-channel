@@ -614,6 +614,18 @@ fn main() {
         }
     }
 
+    let run_batch_async_with_options = |options| {
+        runtime.block_on(bench_async("batch-channel", options, BatchChannel));
+        runtime.block_on(bench_async("kanal", options, KanalChannel));
+        runtime.block_on(bench_async("async-channel", options, AsyncChannel));
+    };
+
+    let run_batch_sync_with_options = |options| {
+        bench_sync("batch-channel", options, BatchChannel);
+        bench_sync("kanal", options, KanalChannel);
+        bench_sync("crossbeam", options, CrossbeamChannel);
+    };
+
     if ARGS.csv {
         println!("mode,channel,tx,rx,tx_batch_size,rx_batch_size,total_ns,per_item_ns");
     }
@@ -627,16 +639,13 @@ fn main() {
             if !ARGS.csv {
                 println!("  batch={}", batch_size);
             }
-            let options = Options {
+
+            run_batch_async_with_options(Options {
                 tx_batch_size: batch_size,
                 rx_batch_size: batch_size,
                 tx_count,
                 rx_count,
-            };
-
-            runtime.block_on(bench_async("batch-channel", options, BatchChannel));
-            runtime.block_on(bench_async("kanal", options, KanalChannel));
-            runtime.block_on(bench_async("async-channel", options, AsyncChannel));
+            });
         }
 
         if !ARGS.csv {
@@ -647,15 +656,13 @@ fn main() {
             if !ARGS.csv {
                 println!("  batch={}", batch_size);
             }
-            let options = Options {
+
+            run_batch_sync_with_options(Options {
                 tx_batch_size: batch_size,
                 rx_batch_size: batch_size,
                 tx_count,
                 rx_count,
-            };
-            bench_sync("batch-channel", options, BatchChannel);
-            bench_sync("kanal", options, KanalChannel);
-            bench_sync("crossbeam", options, CrossbeamChannel);
+            });
         }
     }
 }
