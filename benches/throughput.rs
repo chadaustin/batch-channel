@@ -381,7 +381,8 @@ impl<T: Send> ChannelReceiver<T> for async_channel::Receiver<T> {
 
 #[derive(Copy, Clone)]
 struct Options {
-    batch_size: usize,
+    tx_batch_size: usize,
+    rx_batch_size: usize,
     tx_count: usize,
     rx_count: usize,
 }
@@ -399,7 +400,14 @@ impl Timings {
 
 async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 2 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
+    let send_count: usize = 2
+        * 1024
+        * 1024
+        * (if C::HAS_BATCH {
+            options.tx_batch_size
+        } else {
+            1
+        });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::with_capacity(options.tx_count);
@@ -412,7 +420,7 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
         let tx = tx.clone();
         senders.push(tokio::spawn(
             async move {
-                tx.autobatch(options.batch_size, move |tx| {
+                tx.autobatch(options.tx_batch_size, move |tx| {
                     async move {
                         for i in 0..send_count {
                             tx.send((task_id, i)).await;
@@ -430,10 +438,10 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
         let rx = rx.clone();
         receivers.push(tokio::spawn(
             async move {
-                let mut batch = Vec::with_capacity(options.batch_size);
+                let mut batch = Vec::with_capacity(options.rx_batch_size);
                 loop {
                     batch.clear();
-                    rx.recv_vec(options.batch_size, &mut batch).await;
+                    rx.recv_vec(options.rx_batch_size, &mut batch).await;
                     if batch.is_empty() {
                         break;
                     }
@@ -460,7 +468,14 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
 
 fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1 * 1024 * 1024 * (if C::HAS_BATCH { options.batch_size } else { 1 });
+    let send_count: usize = 1
+        * 1024
+        * 1024
+        * (if C::HAS_BATCH {
+            options.tx_batch_size
+        } else {
+            1
+        });
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::with_capacity(options.tx_count);
@@ -472,7 +487,7 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     for task_id in 0..options.tx_count {
         let tx = tx.clone();
         senders.push(std::thread::spawn(move || {
-            tx.autobatch(options.batch_size, move |tx| {
+            tx.autobatch(options.tx_batch_size, move |tx| {
                 for i in 0..send_count {
                     tx.send((task_id, i));
                 }
@@ -483,10 +498,10 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     for _ in 0..options.rx_count {
         let rx = rx.clone();
         receivers.push(std::thread::spawn(move || {
-            let mut batch = Vec::with_capacity(options.batch_size);
+            let mut batch = Vec::with_capacity(options.rx_batch_size);
             loop {
                 batch.clear();
-                rx.recv_vec(options.batch_size, &mut batch);
+                rx.recv_vec(options.rx_batch_size, &mut batch);
                 if batch.is_empty() {
                     break;
                 }
@@ -512,6 +527,14 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
 #[derive(Debug, Subcommand)]
 enum Commands {
     Throughput {
+        #[arg(long)]
+        bench: bool,
+    },
+    Alloc {
+        #[arg(long)]
+        bench: bool,
+    },
+    Async {
         #[arg(long)]
         bench: bool,
     },
@@ -561,11 +584,12 @@ fn main() {
         let timings = benchmark_throughput_async(channel, options).await;
         if ARGS.csv {
             println!(
-                "async,{},{},{},{},{},{}",
+                "async,{},{},{},{},{},{},{}",
                 name,
                 options.tx_count,
                 options.rx_count,
-                options.batch_size,
+                options.tx_batch_size,
+                options.rx_batch_size,
                 timings.total.as_nanos(),
                 timings.per_item.as_nanos()
             );
@@ -581,11 +605,12 @@ fn main() {
         let timings = benchmark_throughput_sync(channel, options);
         if ARGS.csv {
             println!(
-                "sync,{},{},{},{},{},{}",
+                "sync,{},{},{},{},{},{},{}",
                 name,
                 options.tx_count,
                 options.rx_count,
-                options.batch_size,
+                options.tx_batch_size,
+                options.rx_batch_size,
                 timings.total.as_nanos(),
                 timings.per_item.as_nanos()
             );
@@ -595,7 +620,7 @@ fn main() {
     }
 
     if ARGS.csv {
-        println!("mode,channel,tx,rx,batch_size,total_ns,per_item_ns");
+        println!("mode,channel,tx,rx,tx_batch_size,rx_batch_size,total_ns,per_item_ns");
     }
 
     for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
@@ -608,7 +633,8 @@ fn main() {
                 println!("  batch={}", batch_size);
             }
             let options = Options {
-                batch_size,
+                tx_batch_size: batch_size,
+                rx_batch_size: batch_size,
                 tx_count,
                 rx_count,
             };
@@ -627,7 +653,8 @@ fn main() {
                 println!("  batch={}", batch_size);
             }
             let options = Options {
-                batch_size,
+                tx_batch_size: batch_size,
+                rx_batch_size: batch_size,
                 tx_count,
                 rx_count,
             };
