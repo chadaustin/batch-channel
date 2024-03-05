@@ -89,27 +89,37 @@ impl<T> Core<T> {
     /// Returns when there is a value or there are no values and all
     /// senders are dropped.
     fn block_until_not_empty(&self) -> MutexGuard<'_, State<T>> {
-        let state = self.state.lock().unwrap();
+        fn condition<T>(s: &mut State<T>) -> bool {
+            !s.closed && s.queue.is_empty()
+        }
+
+        let mut state = self.state.lock().unwrap();
+        if !condition(&mut *state) {
+            return state;
+        }
         // Initialize the condvar while the lock is held. Thus, the
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
         let not_empty = self.not_empty.get_or_init(Default::default);
-        not_empty
-            .wait_while(state, |s| !s.closed && s.queue.is_empty())
-            .unwrap()
+        not_empty.wait_while(state, condition).unwrap()
     }
 
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
     fn block_until_not_full(&self) -> MutexGuard<'_, State<T>> {
-        let state = self.state.lock().unwrap();
+        fn condition<T>(s: &mut State<T>) -> bool {
+            !s.closed && !s.has_capacity()
+        }
+
+        let mut state = self.state.lock().unwrap();
+        if !condition(&mut *state) {
+            return state;
+        }
         // Initialize the condvar while the lock is held. Thus, the
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
         let not_full = self.not_full.get_or_init(Default::default);
-        not_full
-            .wait_while(state, |s| !s.closed && !s.has_capacity())
-            .unwrap()
+        not_full.wait_while(state, condition).unwrap()
     }
 
     /// Returns when there is either room in the queue or all receivers
