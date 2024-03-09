@@ -17,6 +17,7 @@ debug = true
 [dependencies]
 futures-core = "0.3"
 splitrc = "0.1"
+parking_lot = { version = "0.12", optional = true }
 
 [dev-dependencies]
 anyhow = "1"
