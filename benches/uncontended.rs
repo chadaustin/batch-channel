@@ -11,7 +11,10 @@ fn batch_channel(bencher: Bencher) {
                 tx.send(i).unwrap();
             }
             drop(tx);
-            while let Some(_) = rx.recv() {}
+            for i in 0..item_count {
+                assert_eq!(Some(i), rx.recv());
+            }
+            assert_eq!(None, rx.recv());
         });
 }
 
@@ -26,7 +29,10 @@ fn kanal(bencher: Bencher) {
                 tx.send(i).unwrap();
             }
             drop(tx);
-            while let Ok(_) = rx.recv() {}
+            for i in 0..item_count {
+                assert_eq!(Ok(i), rx.recv());
+            }
+            assert!(rx.recv().is_err());
         });
 }
 
@@ -41,7 +47,10 @@ fn crossbeam(bencher: Bencher) {
                 tx.send(i).unwrap();
             }
             drop(tx);
-            while let Ok(_) = rx.recv() {}
+            for i in 0..item_count {
+                assert_eq!(Ok(i), rx.recv());
+            }
+            assert!(rx.recv().is_err());
         });
 }
 
