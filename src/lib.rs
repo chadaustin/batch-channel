@@ -8,13 +8,16 @@ use std::fmt;
 use std::future::Future;
 use std::iter::Peekable;
 use std::pin::Pin;
-use std::sync::Condvar;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::sync::OnceLock;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
+
+mod mutex;
+
+use mutex::Condvar;
+use mutex::Mutex;
+use mutex::MutexGuard;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
@@ -93,7 +96,7 @@ impl<T> Core<T> {
             !s.closed && s.queue.is_empty()
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         if !condition(&mut *state) {
             return state;
         }
@@ -101,7 +104,7 @@ impl<T> Core<T> {
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
         let not_empty = self.not_empty.get_or_init(Default::default);
-        not_empty.wait_while(state, condition).unwrap()
+        not_empty.wait_while(state, condition)
     }
 
     /// Returns when there is either room in the queue or all receivers
@@ -111,7 +114,7 @@ impl<T> Core<T> {
             !s.closed && !s.has_capacity()
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         if !condition(&mut *state) {
             return state;
         }
@@ -119,7 +122,7 @@ impl<T> Core<T> {
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
         let not_full = self.not_full.get_or_init(Default::default);
-        not_full.wait_while(state, condition).unwrap()
+        not_full.wait_while(state, condition)
     }
 
     /// Returns when there is either room in the queue or all receivers
@@ -148,9 +151,7 @@ impl<T> Core<T> {
         // caller can, while the lock is held, check whether the
         // condvar must be notified.
         let not_full = self.not_full.get_or_init(Default::default);
-        not_full
-            .wait_while(state, |s| !s.closed && !s.has_capacity())
-            .unwrap()
+        not_full.wait_while(state, |s| !s.closed && !s.has_capacity())
     }
 
     fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
@@ -191,7 +192,7 @@ impl<T> Core<T> {
 
 impl<T> splitrc::Notify for Core<T> {
     fn last_tx_did_drop(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.closed = true;
         // We cannot deallocate the queue, as remaining receivers can
         // drain it.
@@ -199,7 +200,7 @@ impl<T> splitrc::Notify for Core<T> {
     }
 
     fn last_rx_did_drop(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.closed = true;
         // TODO: deallocate
         state.queue.clear();
@@ -499,7 +500,7 @@ impl<'a, T> Future for Send<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.core.state.lock().unwrap();
+        let mut state = self.sender.core.state.lock();
         if state.closed {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
@@ -537,7 +538,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             // self through pi before acquiring the lock below.
         }
 
-        let mut state = self.sender.core.state.lock().unwrap();
+        let mut state = self.sender.core.state.lock();
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -638,7 +639,7 @@ impl<'a, T> Future for Recv<'a, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock();
         match state.queue.pop_front() {
             Some(value) => {
                 self.receiver.core.wake_all_tx(state);
@@ -668,7 +669,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
@@ -700,7 +701,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock().unwrap();
+        let mut state = self.receiver.core.state.lock();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
