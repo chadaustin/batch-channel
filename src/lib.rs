@@ -321,25 +321,11 @@ impl<T> SyncSender<T> {
         }
     }
 
-    /// Converts this into a [SyncBatchSender] with the specified
-    /// capacity.
-    ///
-    /// [SyncBatchSender] manages a single allocation containing
-    /// `capacity` elements and automatically sends batches as it
-    /// fills.
-    pub fn batch(self, capacity: usize) -> SyncBatchSender<T> {
-        SyncBatchSender {
-            sender: self,
-            capacity,
-            buffer: Vec::with_capacity(capacity),
-        }
-    }
-
     /// Automatically accumulate sends into a buffer of size `batch_limit`
     /// and send when full.
-    pub fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
+    pub fn autobatch<'a, F, R>(&'a mut self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
     where
-        F: (FnOnce(&mut SyncBatchSender<T>) -> Result<R, SendError<()>>),
+        F: (FnOnce(&mut SyncBatchSender<'a, T>) -> Result<R, SendError<()>>),
     {
         let mut tx = SyncBatchSender {
             sender: self,
@@ -354,30 +340,15 @@ impl<T> SyncSender<T> {
 
 // SyncBatchSender
 
-/// Automatically sends values on the channel in batches.
-///
-/// Any unsent values are sent upon drop.
+/// Automatically batches up values and sends them when a batch is full.
 #[derive(Debug)]
-pub struct SyncBatchSender<T> {
-    sender: SyncSender<T>,
+pub struct SyncBatchSender<'a, T> {
+    sender: &'a mut SyncSender<T>,
     capacity: usize,
     buffer: Vec<T>,
 }
 
-/// Sends remaining values.
-impl<T> Drop for SyncBatchSender<T> {
-    fn drop(&mut self) {
-        // TODO: How should be handle BatchSender for bounded channels?
-        if self.buffer.is_empty() {
-            return;
-        }
-        // If receivers dropped, there's nothing we can do with any
-        // held values.
-        _ = self.sender.send_vec(std::mem::take(&mut self.buffer));
-    }
-}
-
-impl<T> SyncBatchSender<T> {
+impl<'a, T> SyncBatchSender<'a, T> {
     /// Buffers a single value to be sent on the channel.
     ///
     /// Sends the batch if the buffer is full.

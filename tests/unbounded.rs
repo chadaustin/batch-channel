@@ -211,20 +211,23 @@ fn batch_locally_accumulates() {
         }
     });
 
-    let mut tx = tx.into_sync().batch(2);
+    tx.into_sync()
+        .autobatch(2, |tx| {
+            assert_eq!(Ok(()), tx.send(1));
+            pool.run_until_stalled();
+            assert_eq!(0, read_values.borrow().len());
 
-    assert_eq!(Ok(()), tx.send(1));
-    pool.run_until_stalled();
-    assert_eq!(0, read_values.borrow().len());
+            assert_eq!(Ok(()), tx.send(2));
+            pool.run_until_stalled();
+            assert_eq!(vec![1, 2], read_values.get());
 
-    assert_eq!(Ok(()), tx.send(2));
-    pool.run_until_stalled();
-    assert_eq!(vec![1, 2], read_values.get());
+            assert_eq!(Ok(()), tx.send(3));
+            pool.run_until_stalled();
+            assert_eq!(vec![1, 2], read_values.get());
+            Ok(())
+        })
+        .unwrap();
 
-    assert_eq!(Ok(()), tx.send(3));
-    pool.run_until_stalled();
-    assert_eq!(vec![1, 2], read_values.get());
-    drop(tx);
     pool.run();
     assert_eq!(vec![1, 2, 3], read_values.get());
 }
@@ -284,25 +287,28 @@ fn batch_can_be_drained() {
         }
     });
 
-    let mut tx = tx.into_sync().batch(3);
+    tx.into_sync()
+        .autobatch(3, |tx| {
+            assert_eq!(Ok(()), tx.send(1));
+            pool.run_until_stalled();
+            assert_eq!(0, read_values.borrow().len());
 
-    assert_eq!(Ok(()), tx.send(1));
-    pool.run_until_stalled();
-    assert_eq!(0, read_values.borrow().len());
+            assert_eq!(Ok(()), tx.send(2));
+            pool.run_until_stalled();
+            assert_eq!(0, read_values.borrow().len());
 
-    assert_eq!(Ok(()), tx.send(2));
-    pool.run_until_stalled();
-    assert_eq!(0, read_values.borrow().len());
+            assert_eq!(Ok(()), tx.drain());
+            pool.run_until_stalled();
+            assert_eq!(vec![1, 2], read_values.get());
 
-    assert_eq!(Ok(()), tx.drain());
-    pool.run_until_stalled();
-    assert_eq!(vec![1, 2], read_values.get());
+            assert_eq!(Ok(()), tx.send(3));
+            pool.run_until_stalled();
+            assert_eq!(2, read_values.borrow().len());
 
-    assert_eq!(Ok(()), tx.send(3));
-    pool.run_until_stalled();
-    assert_eq!(2, read_values.borrow().len());
+            Ok(())
+        })
+        .unwrap();
 
-    drop(tx);
     pool.run();
     assert_eq!(vec![1, 2, 3], read_values.get());
 }

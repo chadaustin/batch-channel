@@ -48,11 +48,11 @@ trait ChannelReceiver<T>: Clone + Send {
 }
 
 trait ChannelSyncSender<T>: Clone + Send {
-    type BatchSenderSync: ChannelBatchSenderSync<T>;
+    type BatchSenderSync<'a>: ChannelBatchSenderSync<T> where T: 'a;
 
-    fn autobatch<F>(self, batch_limit: usize, f: F)
+    fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where
-        F: FnOnce(&mut Self::BatchSenderSync);
+        F: FnOnce(&mut Self::BatchSenderSync<'a>);
 }
 
 trait ChannelBatchSenderSync<T>: Send {
@@ -133,11 +133,11 @@ impl<T: Send> ChannelReceiver<T> for batch_channel::Receiver<T> {
 }
 
 impl<T: Send> ChannelSyncSender<T> for batch_channel::SyncSender<T> {
-    type BatchSenderSync = batch_channel::SyncBatchSender<T>;
+    type BatchSenderSync<'a> = batch_channel::SyncBatchSender<'a, T> where T: 'a;
 
-    fn autobatch<F>(self, batch_limit: usize, f: F)
+    fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where
-        F: FnOnce(&mut Self::BatchSenderSync),
+        F: FnOnce(&mut Self::BatchSenderSync<'a>),
     {
         batch_channel::SyncSender::autobatch(self, batch_limit, |tx| {
             f(tx);
@@ -147,7 +147,7 @@ impl<T: Send> ChannelSyncSender<T> for batch_channel::SyncSender<T> {
     }
 }
 
-impl<T: Send> ChannelBatchSenderSync<T> for batch_channel::SyncBatchSender<T> {
+impl<'a, T: Send> ChannelBatchSenderSync<T> for batch_channel::SyncBatchSender<'a, T> {
     fn send(&mut self, value: T) {
         batch_channel::SyncBatchSender::send(self, value)
             .expect("in this benchmark, receiver never drops")
@@ -234,13 +234,13 @@ impl ChannelSync for KanalChannel {
 }
 
 impl<T: Send> ChannelSyncSender<T> for kanal::Sender<T> {
-    type BatchSenderSync = kanal::Sender<T>;
+    type BatchSenderSync<'a> = kanal::Sender<T> where T: 'a;
 
-    fn autobatch<F>(mut self, _batch_limit: usize, f: F)
+    fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
-        for<'a> F: FnOnce(&'a mut Self::BatchSenderSync),
+        F: FnOnce(&mut Self::BatchSenderSync<'a>),
     {
-        f(&mut self);
+        f(self);
     }
 }
 
@@ -284,13 +284,13 @@ impl ChannelSync for CrossbeamChannel {
 }
 
 impl<T: Send> ChannelSyncSender<T> for crossbeam::channel::Sender<T> {
-    type BatchSenderSync = crossbeam::channel::Sender<T>;
+    type BatchSenderSync<'a> = crossbeam::channel::Sender<T> where T: 'a;
 
-    fn autobatch<F>(mut self, _batch_limit: usize, f: F)
+    fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
-        for<'a> F: FnOnce(&'a mut Self::BatchSenderSync),
+        F: FnOnce(&mut Self::BatchSenderSync<'a>),
     {
-        f(&mut self);
+        f(self);
     }
 }
 
@@ -485,7 +485,7 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
 
     let (tx, rx) = C::bounded_sync(CAPACITY);
     for task_id in 0..options.tx_count {
-        let tx = tx.clone();
+        let mut tx = tx.clone();
         senders.push(std::thread::spawn(move || {
             tx.autobatch(options.tx_batch_size, move |tx| {
                 for i in 0..send_count {
