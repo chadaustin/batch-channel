@@ -142,8 +142,7 @@ impl<T> Core<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        // TODO: keep the rx_wakers allocation somehow
-        for waker in std::mem::take(&mut state.rx_wakers) {
+        for waker in state.rx_wakers.drain(..) {
             waker.wake();
         }
 
