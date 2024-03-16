@@ -48,7 +48,9 @@ trait ChannelReceiver<T>: Clone + Send {
 }
 
 trait ChannelSyncSender<T>: Clone + Send {
-    type BatchSenderSync<'a>: ChannelBatchSenderSync<T> where T: 'a;
+    type BatchSenderSync<'a>: ChannelBatchSenderSync<T>
+    where
+        T: 'a;
 
     fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where

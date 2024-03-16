@@ -49,6 +49,20 @@ impl StateBase {
         // instead.
         self.capacity
     }
+
+    fn pending_tx<T>(&mut self, cx: &mut Context) -> Poll<T> {
+        // This may allocate, but only when the sender is about to
+        // block, which is already expensive.
+        self.tx_wakers.push(cx.waker().clone());
+        Poll::Pending
+    }
+
+    fn pending_rx<T>(&mut self, cx: &mut Context) -> Poll<T> {
+        // This may allocate, but only when the receiver is about to
+        // block, which is already expensive.
+        self.rx_wakers.push(cx.waker().clone());
+        Poll::Pending
+    }
 }
 
 #[derive(Debug)]
@@ -479,8 +493,7 @@ impl<'a, T> Future for Send<'a, T> {
             self.sender.core.wake_all_rx(state);
             Poll::Ready(Ok(()))
         } else {
-            state.tx_wakers.push(cx.waker().clone());
-            Poll::Pending
+            state.pending_tx(cx)
         }
     }
 }
@@ -525,8 +538,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             Poll::Ready(Err(SendError(())))
         } else if !state.has_capacity() {
             // We know we have a value to send, but there is no room.
-            state.tx_wakers.push(cx.waker().clone());
-            Poll::Pending
+            state.pending_tx(cx)
         } else {
             debug_assert!(state.has_capacity());
             state.queue.push_back(pi.next().unwrap());
@@ -551,9 +563,10 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                 return Poll::Ready(Ok(()));
             }
 
-            state.tx_wakers.push(cx.waker().clone());
+            // Unconditionally returns Poll::Pending
+            let pending = state.pending_tx(cx);
             self.sender.core.wake_all_rx(state);
-            Poll::Pending
+            pending
         }
     }
 }
@@ -619,8 +632,7 @@ impl<'a, T> Future for Recv<'a, T> {
                 if state.closed {
                     Poll::Ready(None)
                 } else {
-                    state.rx_wakers.push(cx.waker().clone());
-                    Poll::Pending
+                    state.pending_rx(cx)
                 }
             }
         }
@@ -646,8 +658,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
             if state.closed {
                 return Poll::Ready(Vec::new());
             } else {
-                state.rx_wakers.push(cx.waker().clone());
-                return Poll::Pending;
+                return state.pending_rx(cx);
             }
         }
 
@@ -679,8 +690,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
                 assert!(self.vec.is_empty());
                 return Poll::Ready(());
             } else {
-                state.rx_wakers.push(cx.waker().clone());
-                return Poll::Pending;
+                return state.pending_rx(cx);
             }
         }
 
