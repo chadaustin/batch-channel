@@ -1,5 +1,6 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 #[test]
 fn sync_to_async_and_back() {
@@ -35,8 +36,12 @@ impl Drop for Counter {
     }
 }
 
+// cargo test runs threads multithreaded by default. crazy.
+static COUNTER_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
 #[test]
 fn counter_instances_count() {
+    let _l = COUNTER_TEST_MUTEX.lock().unwrap();
     assert_eq!(0, COUNT.load(Ordering::Acquire));
     let c1 = Counter::new();
     assert_eq!(1, COUNT.load(Ordering::Acquire));
@@ -50,6 +55,7 @@ fn counter_instances_count() {
 
 #[test]
 fn closing_rx_drops_elements() {
+    let _l = COUNTER_TEST_MUTEX.lock().unwrap();
     let (tx, rx) = batch_channel::bounded_sync(2);
     tx.send(Counter::new()).unwrap();
     assert_eq!(1, COUNT.load(Ordering::Acquire));
