@@ -257,6 +257,7 @@ dependencies = [
  "kanal",
  "lazy_static",
  "parking_lot",
+ "smallvec",
  "splitrc",
  "tokio",
 ]

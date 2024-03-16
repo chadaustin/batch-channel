@@ -16,6 +16,8 @@ debug = true
 
 [dependencies]
 futures-core = "0.3"
+# features = "union" saves a machine word
+smallvec = { version = "1.13", features = ["union"], optional = true }
 splitrc = "0.1"
 parking_lot = { version = "0.12", optional = true }
 

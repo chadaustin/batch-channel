@@ -33,14 +33,22 @@ macro_rules! derive_clone {
     };
 }
 
+/// Slightly more optimized than Vec<Waker> and avoids an allocation
+/// when only one task is blocked.
+#[cfg(feature = "smallvec")]
+type WakerList = smallvec::SmallVec<[Waker; 1]>;
+
+#[cfg(not(feature = "smallvec"))]
+type WakerList = Vec<Waker>;
+
 #[derive(Debug)]
 struct StateBase {
     capacity: usize,
     closed: bool,
     // An intrusive linked list through the futures would also work
     // and avoid allocation here.
-    tx_wakers: Vec<Waker>,
-    rx_wakers: Vec<Waker>,
+    tx_wakers: WakerList,
+    rx_wakers: WakerList,
 }
 
 impl StateBase {
@@ -854,8 +862,8 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             base: StateBase {
                 capacity,
                 closed: false,
-                tx_wakers: Vec::new(),
-                rx_wakers: Vec::new(),
+                tx_wakers: WakerList::new(),
+                rx_wakers: WakerList::new(),
             },
             queue: VecDeque::new(),
         }),
@@ -885,8 +893,8 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
             base: StateBase {
                 capacity: UNBOUNDED_CAPACITY,
                 closed: false,
-                tx_wakers: Vec::new(),
-                rx_wakers: Vec::new(),
+                tx_wakers: WakerList::new(),
+                rx_wakers: WakerList::new(),
             },
             queue: VecDeque::new(),
         }),
