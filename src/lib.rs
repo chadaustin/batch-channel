@@ -2,6 +2,7 @@
 #![doc = include_str!("example.md")]
 
 use futures_core::future::BoxFuture;
+use pin_project::pin_project;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
@@ -42,12 +43,15 @@ type WakerList = smallvec::SmallVec<[Waker; 1]>;
 type WakerList = Vec<Waker>;
 
 #[derive(Debug)]
+#[pin_project]
 struct StateBase {
     capacity: usize,
     closed: bool,
     // An intrusive linked list through the futures would also work
     // and avoid allocation here.
+    #[pin]
     tx_wakers: WakerList,
+    #[pin]
     rx_wakers: WakerList,
 }
 
@@ -74,7 +78,9 @@ impl StateBase {
 }
 
 #[derive(Debug)]
+#[pin_project]
 struct State<T> {
+    #[pin]
     base: StateBase,
     queue: VecDeque<T>,
 }
@@ -100,7 +106,9 @@ impl<T> std::ops::DerefMut for State<T> {
 }
 
 #[derive(Debug)]
+#[pin_project]
 struct Core<T> {
+    #[pin]
     state: Mutex<State<T>>,
     // OnceLock ensures Core is Sync and Arc<Core> is Send. But it is
     // not strictly necessary, as these condition variables are only

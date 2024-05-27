@@ -10,6 +10,7 @@ use std::sync::Mutex;
 pub trait TestPool {
     fn spawn<F: Future<Output = ()> + 'static>(&self, future: F);
 
+    #[allow(dead_code)]
     fn block_on<T, F: Future<Output = T> + 'static>(&mut self, future: F) -> T;
 }
 
