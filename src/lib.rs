@@ -161,6 +161,10 @@ impl<T> Core<T> {
             not_empty.notify_all();
         }
 
+        // TODO: We should not be waking Wakers while a lock is held.
+        // I suppose we should release and then reacquire. Reason
+        // through this.
+
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
