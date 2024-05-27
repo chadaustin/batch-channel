@@ -255,7 +255,7 @@ impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 /// The sending half of a channel.
 #[derive(Debug)]
 pub struct SyncSender<T> {
-    core: splitrc::Tx<Core<T>>,
+    core: Pin<splitrc::Tx<Core<T>>>,
 }
 
 derive_clone!(SyncSender);
@@ -415,7 +415,7 @@ impl<'a, T> SyncBatchSender<'a, T> {
 /// The asynchronous sending half of a channel.
 #[derive(Debug)]
 pub struct Sender<T> {
-    core: splitrc::Tx<Core<T>>,
+    core: Pin<splitrc::Tx<Core<T>>>,
 }
 
 derive_clone!(Sender);
@@ -618,7 +618,7 @@ impl<T> BatchSender<T> {
 /// The receiving half of a channel. Reads are asynchronous.
 #[derive(Debug)]
 pub struct Receiver<T> {
-    core: splitrc::Rx<Core<T>>,
+    core: Pin<splitrc::Rx<Core<T>>>,
 }
 
 derive_clone!(Receiver);
@@ -774,7 +774,7 @@ impl<T> Receiver<T> {
 /// The synchronous receiving half of a channel.
 #[derive(Debug)]
 pub struct SyncReceiver<T> {
-    core: splitrc::Rx<Core<T>>,
+    core: Pin<splitrc::Rx<Core<T>>>,
 }
 
 derive_clone!(SyncReceiver);
@@ -874,7 +874,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
         not_full: OnceLock::new(),
     };
-    let (core_tx, core_rx) = splitrc::new(core);
+    let (core_tx, core_rx) = splitrc::pin(core);
     (Sender { core: core_tx }, Receiver { core: core_rx })
 }
 
@@ -905,7 +905,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         not_empty: OnceLock::new(),
         not_full: OnceLock::new(),
     };
-    let (core_tx, core_rx) = splitrc::new(core);
+    let (core_tx, core_rx) = splitrc::pin(core);
     (Sender { core: core_tx }, Receiver { core: core_rx })
 }
 
