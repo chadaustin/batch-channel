@@ -121,12 +121,12 @@ struct Core<T> {
 impl<T> Core<T> {
     /// Returns when there is a value or there are no values and all
     /// senders are dropped.
-    fn block_until_not_empty(&self) -> MutexGuard<'_, State<T>> {
+    fn block_until_not_empty(self: Pin<&Self>) -> MutexGuard<'_, State<T>> {
         fn condition<T>(s: &mut State<T>) -> bool {
             !s.closed && s.queue.is_empty()
         }
 
-        let mut state = self.state.lock();
+        let mut state = self.get_ref().state.lock();
         if !condition(&mut *state) {
             return state;
         }
@@ -139,12 +139,12 @@ impl<T> Core<T> {
 
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
-    fn block_until_not_full(&self) -> MutexGuard<'_, State<T>> {
+    fn block_until_not_full(self: Pin<&Self>) -> MutexGuard<'_, State<T>> {
         fn condition<T>(s: &mut State<T>) -> bool {
             !s.closed && !s.has_capacity()
         }
 
-        let mut state = self.state.lock();
+        let mut state = self.get_ref().state.lock();
         if !condition(&mut *state) {
             return state;
         }
@@ -278,7 +278,7 @@ impl<T> SyncSender<T> {
     ///
     /// Returns [SendError] if all receivers are dropped.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        let mut state = self.core.block_until_not_full();
+        let mut state = self.core.as_ref().block_until_not_full();
         if state.closed {
             assert!(state.queue.is_empty());
             return Err(SendError(value));
@@ -306,7 +306,7 @@ impl<T> SyncSender<T> {
             return Ok(());
         };
 
-        let mut state = self.core.block_until_not_full();
+        let mut state = self.core.as_ref().block_until_not_full();
         'outer: loop {
             if state.closed {
                 // We may have sent some values, but the receivers are
@@ -797,7 +797,7 @@ impl<T> SyncReceiver<T> {
     ///
     /// Returns [None] if all [Sender]s are dropped.
     pub fn recv(&self) -> Option<T> {
-        let mut state = self.core.block_until_not_empty();
+        let mut state = self.core.as_ref().block_until_not_empty();
         match state.queue.pop_front() {
             Some(value) => {
                 self.core.wake_all_tx(state);
@@ -817,7 +817,7 @@ impl<T> SyncReceiver<T> {
     ///
     /// Returns an empty [Vec] if all [Sender]s are dropped.
     pub fn recv_batch(&self, element_limit: usize) -> Vec<T> {
-        let mut state = self.core.block_until_not_empty();
+        let mut state = self.core.as_ref().block_until_not_empty();
 
         let q = &mut state.queue;
         let q_len = q.len();
@@ -845,7 +845,7 @@ impl<T> SyncReceiver<T> {
     pub fn recv_vec(&self, element_limit: usize, vec: &mut Vec<T>) {
         vec.clear();
 
-        let mut state = self.core.block_until_not_empty();
+        let mut state = self.core.as_ref().block_until_not_empty();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
