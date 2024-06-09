@@ -14,10 +14,10 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
-#[cfg(parking_lot)]
+#[cfg(feature = "parking_lot")]
 use pinned_mutex::parking_lot as mutex;
 
-#[cfg(not(parking_lot))]
+#[cfg(not(feature = "parking_lot"))]
 use pinned_mutex::std as mutex;
 
 use mutex::PinnedCondvar as Condvar;
