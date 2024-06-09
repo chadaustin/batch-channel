@@ -158,7 +158,7 @@ impl<T> Core<T> {
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
     fn wake_rx_and_block_not_full<'a>(
-        &self,
+        self: Pin<&Self>,
         mut state: MutexGuard<'a, State<T>>,
     ) -> MutexGuard<'a, State<T>> {
         // The lock is held. Therefore, we know whether a Condvar must
@@ -187,7 +187,7 @@ impl<T> Core<T> {
         not_full.wait_while(state, |s| !s.closed && !s.has_capacity())
     }
 
-    fn wake_all_tx(&self, mut state: MutexGuard<State<T>>) {
+    fn wake_all_tx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_full.get();
         // TODO: keep the tx_wakers allocation somehow
@@ -205,7 +205,7 @@ impl<T> Core<T> {
         }
     }
 
-    fn wake_all_rx(&self, mut state: MutexGuard<State<T>>) {
+    fn wake_all_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
         // TODO: keep the rx_wakers allocation somehow
@@ -224,7 +224,7 @@ impl<T> Core<T> {
 }
 
 impl<T> splitrc::Notify for Core<T> {
-    fn last_tx_did_drop(&self) {
+    fn last_tx_did_drop_pinned(self: Pin<&Self>) {
         let mut state = self.state.lock();
         state.closed = true;
         // We cannot deallocate the queue, as remaining receivers can
@@ -232,7 +232,7 @@ impl<T> splitrc::Notify for Core<T> {
         self.wake_all_rx(state);
     }
 
-    fn last_rx_did_drop(&self) {
+    fn last_rx_did_drop_pinned(self: Pin<&Self>) {
         let mut state = self.state.lock();
         state.closed = true;
         // TODO: deallocate
@@ -286,7 +286,7 @@ impl<T> SyncSender<T> {
 
         state.queue.push_back(value);
 
-        self.core.wake_all_rx(state);
+        self.core.as_ref().wake_all_rx(state);
         Ok(())
     }
 
@@ -327,14 +327,14 @@ impl<T> SyncSender<T> {
                             // We're about to block, but we know we
                             // sent at least one value, so wake any
                             // waiters.
-                            state = self.core.wake_rx_and_block_not_full(state);
+                            state = self.core.as_ref().wake_rx_and_block_not_full(state);
                             continue 'outer;
                         }
                     }
                     None => {
                         // Done pulling from the iterator and know we
                         // sent at least one value.
-                        self.core.wake_all_rx(state);
+                        self.core.as_ref().wake_all_rx(state);
                         return Ok(());
                     }
                 }
@@ -510,7 +510,7 @@ impl<'a, T> Future for Send<'a, T> {
         }
         if state.has_capacity() {
             state.queue.push_back(self.as_mut().value.take().unwrap());
-            self.sender.core.wake_all_rx(state);
+            self.sender.core.as_ref().wake_all_rx(state);
             Poll::Ready(Ok(()))
         } else {
             state.pending_tx(cx)
@@ -570,7 +570,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
                     None => {
                         // Done pulling from the iterator and still
                         // have capacity, so we're done.
-                        self.sender.core.wake_all_rx(state);
+                        self.sender.core.as_ref().wake_all_rx(state);
                         return Poll::Ready(Ok(()));
                     }
                 }
@@ -579,13 +579,13 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             // send. To avoid a round-trip through the scheduler, peek
             // ahead.
             if pi.peek().is_none() {
-                self.sender.core.wake_all_rx(state);
+                self.sender.core.as_ref().wake_all_rx(state);
                 return Poll::Ready(Ok(()));
             }
 
             // Unconditionally returns Poll::Pending
             let pending = state.pending_tx(cx);
-            self.sender.core.wake_all_rx(state);
+            self.sender.core.as_ref().wake_all_rx(state);
             pending
         }
     }
@@ -645,7 +645,7 @@ impl<'a, T> Future for Recv<'a, T> {
         let mut state = self.receiver.core.state.lock();
         match state.queue.pop_front() {
             Some(value) => {
-                self.receiver.core.wake_all_tx(state);
+                self.receiver.core.as_ref().wake_all_tx(state);
                 Poll::Ready(Some(value))
             }
             None => {
@@ -684,7 +684,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 
         let capacity = min(q_len, self.element_limit);
         let v = Vec::from_iter(q.drain(..capacity));
-        self.receiver.core.wake_all_tx(state);
+        self.receiver.core.as_ref().wake_all_tx(state);
         Poll::Ready(v)
     }
 }
@@ -716,7 +716,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
 
         let capacity = min(q_len, self.element_limit);
         self.vec.extend(q.drain(..capacity));
-        self.receiver.core.wake_all_tx(state);
+        self.receiver.core.as_ref().wake_all_tx(state);
         Poll::Ready(())
     }
 }
@@ -800,7 +800,7 @@ impl<T> SyncReceiver<T> {
         let mut state = self.core.as_ref().block_until_not_empty();
         match state.queue.pop_front() {
             Some(value) => {
-                self.core.wake_all_tx(state);
+                self.core.as_ref().wake_all_tx(state);
                 Some(value)
             }
             None => {
@@ -828,7 +828,7 @@ impl<T> SyncReceiver<T> {
 
         let capacity = min(q_len, element_limit);
         let v = Vec::from_iter(q.drain(..capacity));
-        self.core.wake_all_tx(state);
+        self.core.as_ref().wake_all_tx(state);
         v
     }
 
@@ -856,7 +856,7 @@ impl<T> SyncReceiver<T> {
 
         let capacity = min(q_len, element_limit);
         vec.extend(q.drain(..capacity));
-        self.core.wake_all_tx(state);
+        self.core.as_ref().wake_all_tx(state);
     }
 }
 
