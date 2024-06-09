@@ -14,11 +14,15 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
-mod mutex;
+#[cfg(parking_lot)]
+use pinned_mutex::parking_lot as mutex;
 
-use mutex::Condvar;
-use mutex::Mutex;
-use mutex::MutexGuard;
+#[cfg(not(parking_lot))]
+use pinned_mutex::std as mutex;
+
+use mutex::PinnedCondvar as Condvar;
+use mutex::PinnedMutex as Mutex;
+use mutex::PinnedMutexGuard as MutexGuard;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
@@ -122,12 +126,12 @@ impl<T> Core<T> {
     /// Returns when there is a value or there are no values and all
     /// senders are dropped.
     fn block_until_not_empty(self: Pin<&Self>) -> MutexGuard<'_, State<T>> {
-        fn condition<T>(s: &mut State<T>) -> bool {
+        fn condition<T>(s: Pin<&mut State<T>>) -> bool {
             !s.closed && s.queue.is_empty()
         }
 
-        let mut state = self.get_ref().state.lock();
-        if !condition(&mut *state) {
+        let mut state = self.project_ref().state.lock();
+        if !condition(state.as_mut()) {
             return state;
         }
         // Initialize the condvar while the lock is held. Thus, the
@@ -140,12 +144,12 @@ impl<T> Core<T> {
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
     fn block_until_not_full(self: Pin<&Self>) -> MutexGuard<'_, State<T>> {
-        fn condition<T>(s: &mut State<T>) -> bool {
+        fn condition<T>(s: Pin<&mut State<T>>) -> bool {
             !s.closed && !s.has_capacity()
         }
 
-        let mut state = self.get_ref().state.lock();
-        if !condition(&mut *state) {
+        let mut state = self.project_ref().state.lock();
+        if !condition(state.as_mut()) {
             return state;
         }
         // Initialize the condvar while the lock is held. Thus, the
@@ -225,7 +229,7 @@ impl<T> Core<T> {
 
 impl<T> splitrc::Notify for Core<T> {
     fn last_tx_did_drop_pinned(self: Pin<&Self>) {
-        let mut state = self.state.lock();
+        let mut state = self.project_ref().state.lock();
         state.closed = true;
         // We cannot deallocate the queue, as remaining receivers can
         // drain it.
@@ -233,7 +237,7 @@ impl<T> splitrc::Notify for Core<T> {
     }
 
     fn last_rx_did_drop_pinned(self: Pin<&Self>) {
-        let mut state = self.state.lock();
+        let mut state = self.project_ref().state.lock();
         state.closed = true;
         // TODO: deallocate
         state.queue.clear();
@@ -504,7 +508,7 @@ impl<'a, T> Future for Send<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.sender.core.state.lock();
+        let mut state = self.sender.core.as_ref().project_ref().state.lock();
         if state.closed {
             return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
         }
@@ -541,7 +545,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             // self through pi before acquiring the lock below.
         }
 
-        let mut state = self.sender.core.state.lock();
+        let mut state = self.sender.core.as_ref().project_ref().state.lock();
 
         // There is an awkward set of constraints here.
         // 1. To check whether an iterator contains an item, one must be popped.
@@ -642,7 +646,7 @@ impl<'a, T> Future for Recv<'a, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock();
+        let mut state = self.receiver.core.as_ref().project_ref().state.lock();
         match state.queue.pop_front() {
             Some(value) => {
                 self.receiver.core.as_ref().wake_all_tx(state);
@@ -671,7 +675,7 @@ impl<'a, T> Future for RecvBatch<'a, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock();
+        let mut state = self.receiver.core.as_ref().project_ref().state.lock();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
@@ -702,7 +706,7 @@ impl<'a, T> Future for RecvVec<'a, T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.receiver.core.state.lock();
+        let mut state = self.receiver.core.as_ref().project_ref().state.lock();
         let q = &mut state.queue;
         let q_len = q.len();
         if q_len == 0 {
