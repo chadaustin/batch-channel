@@ -19,7 +19,7 @@ fast = ["parking_lot", "smallvec"]
 
 [dependencies]
 futures-core = "0.3"
-parking_lot = { version = "0.12", optional = true }
+parking_lot = { version = "0.12.1", optional = true }
 pin-project = "1.1"
 # features = "union" saves a machine word
 smallvec = { version = "1.13", features = ["union"], optional = true }
@@ -28,10 +28,10 @@ splitrc = "0.1.5"
 [dev-dependencies]
 anyhow = "1"
 async-channel = "2.2"
-async-std = "1"
+async-std = "1.1"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
-divan = "0.1"
+divan = "0.1.1"
 futures = "0.3"
 kanal = "0.1.0-pre8"
 lazy_static = "1.4"
