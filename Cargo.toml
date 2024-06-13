@@ -24,7 +24,7 @@ pin-project = "1.1"
 pinned-mutex = "0.3"
 # features = "union" saves a machine word
 smallvec = { version = "1.13", features = ["union"], optional = true }
-splitrc = "0.1.9"
+splitrc = "0.1.10"
 
 [dev-dependencies]
 anyhow = "1"

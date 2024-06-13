@@ -993,9 +993,9 @@ dependencies = [
 
 [[package]]
 name = "splitrc"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aae3c5ba2fe370dc29cdcbb09b9c735c68847d51fb40dbdecf2e3860a68767ca"
+checksum = "eb06140afd3c53fda01c2239614212eaa55b183d854a4183697516aa0b4e0d82"
 
 [[package]]
 name = "strsim"
