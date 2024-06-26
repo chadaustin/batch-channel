@@ -2,7 +2,14 @@
 #![doc = include_str!("example.md")]
 
 use futures_core::future::BoxFuture;
+use mutex::PinnedCondvar as Condvar;
+use mutex::PinnedMutex as Mutex;
+use mutex::PinnedMutexGuard as MutexGuard;
 use pin_project::pin_project;
+#[cfg(feature = "parking_lot")]
+use pinned_mutex::parking_lot as mutex;
+#[cfg(not(feature = "parking_lot"))]
+use pinned_mutex::std as mutex;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
@@ -13,16 +20,6 @@ use std::sync::OnceLock;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
-
-#[cfg(feature = "parking_lot")]
-use pinned_mutex::parking_lot as mutex;
-
-#[cfg(not(feature = "parking_lot"))]
-use pinned_mutex::std as mutex;
-
-use mutex::PinnedCondvar as Condvar;
-use mutex::PinnedMutex as Mutex;
-use mutex::PinnedMutexGuard as MutexGuard;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
