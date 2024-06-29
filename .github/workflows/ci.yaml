@@ -24,6 +24,18 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack test --feature-powerset
 
+  minimum-dependency-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri,rust-src
+      - run: cargo +nightly -Z minimal-versions update
+      - run: cargo +nightly check --all-targets --all-features
+
   miri:
     strategy:
       matrix:
