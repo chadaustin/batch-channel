@@ -1,0 +1,58 @@
+on: [push, pull_request]
+
+name: CI
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        image:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest # ARM
+          - macos-13 # Intel
+
+    runs-on: ${{ matrix.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack test --feature-powerset
+
+  miri:
+    strategy:
+      matrix:
+        image:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest # ARM
+          - macos-13 # Intel
+
+    runs-on: ${{ matrix.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri,rust-src
+      - run: cargo +nightly miri test
+
+  asan:
+    runs-on: ubuntu-latest
+    env:
+      # ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-14 ?
+      RUSTFLAGS: -Zsanitizer=address
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --lib --bins --tests
