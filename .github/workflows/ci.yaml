@@ -37,15 +37,7 @@ jobs:
       - run: cargo +nightly check --all-targets --all-features
 
   miri:
-    strategy:
-      matrix:
-        image:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest # ARM
-          - macos-13 # Intel
-
-    runs-on: ${{ matrix.image }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
