@@ -914,9 +914,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinned-mutex"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56b570e4aebdb95e35b38fecd2fcd4ef407554a584534ee4313a6a4683d87f9f"
+checksum = "468bf9b6622aa39e7494cafc8fcee47e9731dce5ebe06187b10e45075b26ce72"
 dependencies = [
  "parking_lot",
 ]
