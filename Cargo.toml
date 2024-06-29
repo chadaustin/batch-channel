@@ -27,7 +27,7 @@ smallvec = { version = "1.13", features = ["union"], optional = true }
 splitrc = "0.1.11"
 
 [dev-dependencies]
-anyhow = "1"
+anyhow = "1.0.14"
 async-channel = "2.2"
 async-std = "1.1"
 clap = { version = "4.5", features = ["derive"] }
