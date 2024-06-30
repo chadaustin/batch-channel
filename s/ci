@@ -4,12 +4,8 @@ cd "${BASH_SOURCE%/*}"/..
 
 cargo check --all-targets
 cargo check --all-targets -F parking_lot
-cargo check --all-targets -F smallvec
-cargo check --all-targets -F parking_lot,smallvec
 cargo test
 cargo test -F parking_lot
-cargo test -F smallvec
-cargo test -F parking_lot,smallvec
 #cargo bench
 cargo doc
 

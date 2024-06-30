@@ -19,7 +19,8 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Waker;
+use wakerset::WakerList;
+use wakerset::WakerSlot;
 
 const UNBOUNDED_CAPACITY: usize = usize::MAX;
 
@@ -35,21 +36,11 @@ macro_rules! derive_clone {
     };
 }
 
-/// Slightly more optimized than Vec<Waker> and avoids an allocation
-/// when only one task is blocked.
-#[cfg(feature = "smallvec")]
-type WakerList = smallvec::SmallVec<[Waker; 1]>;
-
-#[cfg(not(feature = "smallvec"))]
-type WakerList = Vec<Waker>;
-
 #[derive(Debug)]
 #[pin_project]
 struct StateBase {
     capacity: usize,
     closed: bool,
-    // An intrusive linked list through the futures would also work
-    // and avoid allocation here.
     #[pin]
     tx_wakers: WakerList,
     #[pin]
@@ -63,17 +54,25 @@ impl StateBase {
         self.capacity
     }
 
-    fn pending_tx<T>(&mut self, cx: &mut Context) -> Poll<T> {
+    fn pending_tx<T>(
+        self: Pin<&mut StateBase>,
+        slot: Pin<&mut WakerSlot>,
+        cx: &mut Context,
+    ) -> Poll<T> {
         // This may allocate, but only when the sender is about to
         // block, which is already expensive.
-        self.tx_wakers.push(cx.waker().clone());
+        self.project().tx_wakers.link(slot, cx.waker().clone());
         Poll::Pending
     }
 
-    fn pending_rx<T>(&mut self, cx: &mut Context) -> Poll<T> {
+    fn pending_rx<T>(
+        self: Pin<&mut StateBase>,
+        slot: Pin<&mut WakerSlot>,
+        cx: &mut Context,
+    ) -> Poll<T> {
         // This may allocate, but only when the receiver is about to
         // block, which is already expensive.
-        self.rx_wakers.push(cx.waker().clone());
+        self.project().rx_wakers.link(slot, cx.waker().clone());
         Poll::Pending
     }
 }
@@ -89,6 +88,10 @@ struct State<T> {
 impl<T> State<T> {
     fn has_capacity(&self) -> bool {
         self.queue.len() < self.target_capacity()
+    }
+
+    fn base(self: Pin<&mut Self>) -> Pin<&mut StateBase> {
+        self.project().base
     }
 }
 
@@ -167,7 +170,13 @@ impl<T> Core<T> {
         let cvar = self.not_empty.get();
         // We should not wake Wakers while a lock is held. Therefore,
         // we must release the lock and reacquire it to wait.
-        let wakers = std::mem::take(&mut state.rx_wakers);
+        let mut wakers = state
+            .as_mut()
+            .project()
+            .base
+            .project()
+            .rx_wakers
+            .extract_some_wakers();
 
         // TODO: Avoid unlocking and locking again when there's no
         // waker or condition variable.
@@ -181,8 +190,9 @@ impl<T> Core<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        for waker in wakers {
-            waker.wake();
+        while wakers.wake_all() {
+            let mut state = self.project_ref().state.lock();
+            wakers.extract_more(state.as_mut().base().project().rx_wakers);
         }
 
         // Lock again to block while full.
@@ -198,8 +208,13 @@ impl<T> Core<T> {
     fn wake_all_tx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_full.get();
-        // TODO: keep the tx_wakers allocation somehow
-        let wakers = std::mem::take(&mut state.tx_wakers);
+        let mut wakers = state
+            .as_mut()
+            .project()
+            .base
+            .project()
+            .tx_wakers
+            .extract_some_wakers();
         drop(state);
         if let Some(cvar) = cvar {
             // TODO: There are situations where we may know that we
@@ -209,16 +224,22 @@ impl<T> Core<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        for waker in wakers {
-            waker.wake();
+        while wakers.wake_all() {
+            let mut state = self.project_ref().state.lock();
+            wakers.extract_more(state.as_mut().project().base.project().tx_wakers);
         }
     }
 
     fn wake_all_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
-        // TODO: keep the rx_wakers allocation somehow
-        let wakers = std::mem::take(&mut state.rx_wakers);
+        let mut wakers = state
+            .as_mut()
+            .project()
+            .base
+            .project()
+            .rx_wakers
+            .extract_some_wakers();
         drop(state);
         if let Some(cvar) = cvar {
             cvar.notify_all();
@@ -226,8 +247,9 @@ impl<T> Core<T> {
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        for waker in wakers {
-            waker.wake();
+        while wakers.wake_all() {
+            let mut state = self.project_ref().state.lock();
+            wakers.extract_more(state.as_mut().project().base.project().rx_wakers);
         }
     }
 }
@@ -235,7 +257,7 @@ impl<T> Core<T> {
 impl<T> splitrc::Notify for Core<T> {
     fn last_tx_did_drop_pinned(self: Pin<&Self>) {
         let mut state = self.project_ref().state.lock();
-        state.closed = true;
+        *state.as_mut().base().project().closed = true;
         // We cannot deallocate the queue, as remaining receivers can
         // drain it.
         self.wake_all_rx(state);
@@ -243,9 +265,9 @@ impl<T> splitrc::Notify for Core<T> {
 
     fn last_rx_did_drop_pinned(self: Pin<&Self>) {
         let mut state = self.project_ref().state.lock();
-        state.closed = true;
+        *state.as_mut().base().project().closed = true;
         // TODO: deallocate
-        state.queue.clear();
+        state.as_mut().project().queue.clear();
         self.wake_all_tx(state);
     }
 }
@@ -289,11 +311,11 @@ impl<T> SyncSender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = self.core.as_ref().block_until_not_full();
         if state.closed {
-            assert!(state.queue.is_empty());
+            assert!(state.as_ref().project_ref().queue.is_empty());
             return Err(SendError(value));
         }
 
-        state.queue.push_back(value);
+        state.as_mut().project().queue.push_back(value);
 
         self.core.as_ref().wake_all_rx(state);
         Ok(())
@@ -325,12 +347,12 @@ impl<T> SyncSender<T> {
             }
 
             debug_assert!(state.has_capacity());
-            state.queue.push_back(value);
+            state.as_mut().project().queue.push_back(value);
             loop {
                 match values.next() {
                     Some(v) => {
                         if state.has_capacity() {
-                            state.queue.push_back(v);
+                            state.as_mut().project().queue.push_back(v);
                         } else {
                             value = v;
                             // We're about to block, but we know we
@@ -450,6 +472,7 @@ impl<T> Sender<T> {
         Send {
             sender: self,
             value: Some(value),
+            waker: WakerSlot::new(),
         }
     }
 
@@ -467,6 +490,7 @@ impl<T> Sender<T> {
         SendIter {
             sender: self,
             values: Some(values.into_iter().peekable()),
+            waker: WakerSlot::new(),
         }
     }
 
@@ -504,9 +528,12 @@ impl<T> Sender<T> {
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
+#[pin_project]
 struct Send<'a, T> {
     sender: &'a Sender<T>,
     value: Option<T>,
+    #[pin]
+    waker: WakerSlot,
 }
 
 impl<'a, T> Future for Send<'a, T> {
@@ -515,24 +542,29 @@ impl<'a, T> Future for Send<'a, T> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.sender.core.as_ref().project_ref().state.lock();
         if state.closed {
-            return Poll::Ready(Err(SendError(self.as_mut().value.take().unwrap())));
+            return Poll::Ready(Err(SendError(self.project().value.take().unwrap())));
         }
         if state.has_capacity() {
-            state.queue.push_back(self.as_mut().value.take().unwrap());
-            self.sender.core.as_ref().wake_all_rx(state);
+            state
+                .as_mut()
+                .project()
+                .queue
+                .push_back(self.as_mut().project().value.take().unwrap());
+            self.project().sender.core.as_ref().wake_all_rx(state);
             Poll::Ready(Ok(()))
         } else {
-            state.pending_tx(cx)
+            state.as_mut().base().pending_tx(self.project().waker, cx)
         }
     }
 }
 
-impl<'a, T> Unpin for Send<'a, T> {}
-
 #[must_use = "futures do nothing unless you `.await` or poll them"]
+#[pin_project]
 struct SendIter<'a, T, I: Iterator<Item = T>> {
     sender: &'a Sender<T>,
     values: Option<Peekable<I>>,
+    #[pin]
+    waker: WakerSlot,
 }
 
 impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
@@ -542,7 +574,7 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
         // Optimize the case that send_iter was called with an empty
         // iterator, and don't even acquire the lock.
         {
-            let pi = self.values.as_mut().unwrap();
+            let pi = self.as_mut().project().values.as_mut().unwrap();
             if pi.peek().is_none() {
                 return Poll::Ready(Ok(()));
             }
@@ -560,21 +592,21 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
         // We relax constraint #2 because #3 is preferable.
         // TODO: We could return Peekable<I> instead.
 
-        let pi = self.values.as_mut().unwrap();
+        let pi = self.as_mut().project().values.as_mut().unwrap();
         // We already checked above.
         debug_assert!(pi.peek().is_some());
         if state.closed {
             Poll::Ready(Err(SendError(())))
         } else if !state.has_capacity() {
             // We know we have a value to send, but there is no room.
-            state.pending_tx(cx)
+            state.as_mut().base().pending_tx(self.project().waker, cx)
         } else {
             debug_assert!(state.has_capacity());
-            state.queue.push_back(pi.next().unwrap());
+            state.as_mut().project().queue.push_back(pi.next().unwrap());
             while state.has_capacity() {
                 match pi.next() {
                     Some(value) => {
-                        state.queue.push_back(value);
+                        state.as_mut().project().queue.push_back(value);
                     }
                     None => {
                         // Done pulling from the iterator and still
@@ -593,14 +625,15 @@ impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
             }
 
             // Unconditionally returns Poll::Pending
-            let pending = state.pending_tx(cx);
+            let pending = state
+                .as_mut()
+                .base()
+                .pending_tx(self.as_mut().project().waker, cx);
             self.sender.core.as_ref().wake_all_rx(state);
             pending
         }
     }
 }
-
-impl<'a, T, I: Iterator<Item = T>> Unpin for SendIter<'a, T, I> {}
 
 // BatchSender
 
@@ -641,18 +674,19 @@ pub struct Receiver<T> {
 derive_clone!(Receiver);
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
+#[pin_project]
 struct Recv<'a, T> {
     receiver: &'a Receiver<T>,
+    #[pin]
+    waker: WakerSlot,
 }
-
-impl<'a, T> Unpin for Recv<'a, T> {}
 
 impl<'a, T> Future for Recv<'a, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.receiver.core.as_ref().project_ref().state.lock();
-        match state.queue.pop_front() {
+        match state.as_mut().project().queue.pop_front() {
             Some(value) => {
                 self.receiver.core.as_ref().wake_all_tx(state);
                 Poll::Ready(Some(value))
@@ -661,7 +695,7 @@ impl<'a, T> Future for Recv<'a, T> {
                 if state.closed {
                     Poll::Ready(None)
                 } else {
-                    state.pending_rx(cx)
+                    state.as_mut().base().pending_rx(self.project().waker, cx)
                 }
             }
         }
@@ -669,25 +703,26 @@ impl<'a, T> Future for Recv<'a, T> {
 }
 
 #[must_use = "futures do nothing unless you .await or poll them"]
+#[pin_project]
 struct RecvBatch<'a, T> {
     receiver: &'a Receiver<T>,
     element_limit: usize,
+    #[pin]
+    waker: WakerSlot,
 }
-
-impl<'a, T> Unpin for RecvBatch<'a, T> {}
 
 impl<'a, T> Future for RecvBatch<'a, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.receiver.core.as_ref().project_ref().state.lock();
-        let q = &mut state.queue;
+        let q = &mut state.as_mut().project().queue;
         let q_len = q.len();
         if q_len == 0 {
             if state.closed {
                 return Poll::Ready(Vec::new());
             } else {
-                return state.pending_rx(cx);
+                return state.as_mut().base().pending_rx(self.project().waker, cx);
             }
         }
 
@@ -699,33 +734,34 @@ impl<'a, T> Future for RecvBatch<'a, T> {
 }
 
 #[must_use = "futures do nothing unless you .await or poll them"]
+#[pin_project]
 struct RecvVec<'a, T> {
     receiver: &'a Receiver<T>,
     element_limit: usize,
     vec: &'a mut Vec<T>,
+    #[pin]
+    waker: WakerSlot,
 }
-
-impl<'a, T> Unpin for RecvVec<'a, T> {}
 
 impl<'a, T> Future for RecvVec<'a, T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.receiver.core.as_ref().project_ref().state.lock();
-        let q = &mut state.queue;
+        let q = &mut state.as_mut().project().queue;
         let q_len = q.len();
         if q_len == 0 {
             if state.closed {
                 assert!(self.vec.is_empty());
                 return Poll::Ready(());
             } else {
-                return state.pending_rx(cx);
+                return state.as_mut().base().pending_rx(self.project().waker, cx);
             }
         }
 
         let capacity = min(q_len, self.element_limit);
-        self.vec.extend(q.drain(..capacity));
-        self.receiver.core.as_ref().wake_all_tx(state);
+        self.as_mut().project().vec.extend(q.drain(..capacity));
+        self.project().receiver.core.as_ref().wake_all_tx(state);
         Poll::Ready(())
     }
 }
@@ -740,7 +776,10 @@ impl<T> Receiver<T> {
     ///
     /// Returns [None] if all [Sender]s are dropped.
     pub fn recv(&self) -> impl Future<Output = Option<T>> + '_ {
-        Recv { receiver: self }
+        Recv {
+            receiver: self,
+            waker: WakerSlot::new(),
+        }
     }
 
     // TODO: try_recv
@@ -755,6 +794,7 @@ impl<T> Receiver<T> {
         RecvBatch {
             receiver: self,
             element_limit,
+            waker: WakerSlot::new(),
         }
     }
 
@@ -780,6 +820,7 @@ impl<T> Receiver<T> {
             receiver: self,
             element_limit,
             vec,
+            waker: WakerSlot::new(),
         }
     }
 
@@ -807,7 +848,7 @@ impl<T> SyncReceiver<T> {
     /// Returns [None] if all [Sender]s are dropped.
     pub fn recv(&self) -> Option<T> {
         let mut state = self.core.as_ref().block_until_not_empty();
-        match state.queue.pop_front() {
+        match state.as_mut().project().queue.pop_front() {
             Some(value) => {
                 self.core.as_ref().wake_all_tx(state);
                 Some(value)
@@ -828,7 +869,7 @@ impl<T> SyncReceiver<T> {
     pub fn recv_batch(&self, element_limit: usize) -> Vec<T> {
         let mut state = self.core.as_ref().block_until_not_empty();
 
-        let q = &mut state.queue;
+        let q = &mut state.as_mut().project().queue;
         let q_len = q.len();
         if q_len == 0 {
             assert!(state.closed);
@@ -855,7 +896,7 @@ impl<T> SyncReceiver<T> {
         vec.clear();
 
         let mut state = self.core.as_ref().block_until_not_empty();
-        let q = &mut state.queue;
+        let q = &mut state.as_mut().project().queue;
         let q_len = q.len();
         if q_len == 0 {
             assert!(state.closed);
