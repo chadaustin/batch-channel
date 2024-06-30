@@ -158,28 +158,35 @@ impl<T> Core<T> {
 
     /// Returns when there is either room in the queue or all receivers
     /// are dropped.
-    fn wake_rx_and_block_not_full<'a>(
-        self: Pin<&Self>,
+    fn wake_rx_and_block_while_full<'a>(
+        self: Pin<&'a Self>,
         mut state: MutexGuard<'a, State<T>>,
     ) -> MutexGuard<'a, State<T>> {
         // The lock is held. Therefore, we know whether a Condvar must
-        // be notified or not. Unfortunately, since we aren't dropping
-        // the mutex unless the `not_full` condition variable below is not
-        // satisfied, we cannot notify `not_empty` outside of the lock.
-        if let Some(not_empty) = self.not_empty.get() {
-            not_empty.notify_all();
+        // be notified or not.
+        let cvar = self.not_empty.get();
+        // We should not wake Wakers while a lock is held. Therefore,
+        // we must release the lock and reacquire it to wait.
+        let wakers = std::mem::take(&mut state.rx_wakers);
+
+        // TODO: Avoid unlocking and locking again when there's no
+        // waker or condition variable.
+
+        drop(state);
+        if let Some(cvar) = cvar {
+            // TODO: There are situations where we may know that we
+            // can get away with notify_one().
+            cvar.notify_all();
         }
-
-        // TODO: We should not be waking Wakers while a lock is held.
-        // I suppose we should release and then reacquire. Reason
-        // through this.
-
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        for waker in state.rx_wakers.drain(..) {
+        for waker in wakers {
             waker.wake();
         }
+
+        // Lock again to block while full.
+        let state = self.project_ref().state.lock();
 
         // Initialize the condvar while the lock is held. Thus, the
         // caller can, while the lock is held, check whether the
@@ -195,7 +202,8 @@ impl<T> Core<T> {
         let wakers = std::mem::take(&mut state.tx_wakers);
         drop(state);
         if let Some(cvar) = cvar {
-            // TODO: There are situations where we may know that we can get away with notify_one(), but
+            // TODO: There are situations where we may know that we
+            // can get away with notify_one().
             cvar.notify_all();
         }
         // There is no guarantee that the highest-priority waker will
@@ -328,7 +336,7 @@ impl<T> SyncSender<T> {
                             // We're about to block, but we know we
                             // sent at least one value, so wake any
                             // waiters.
-                            state = self.core.as_ref().wake_rx_and_block_not_full(state);
+                            state = self.core.as_ref().wake_rx_and_block_while_full(state);
                             continue 'outer;
                         }
                     }
