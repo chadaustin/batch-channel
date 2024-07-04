@@ -1,3 +1,7 @@
+#![feature(async_closure)]
+
+use batch_channel::AsyncCallback;
+use batch_channel::SendError;
 use clap::Parser;
 use clap::Subcommand;
 use futures::future::BoxFuture;
@@ -32,7 +36,7 @@ trait ChannelSender<T>: Clone + Send {
 
     fn autobatch<F>(self, batch_limit: usize, f: F) -> impl Future<Output = ()> + Send
     where
-        for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static;
+        F: for<'a> AsyncCallback<'a, &'a mut Self::BatchSender, Result<(), SendError<()>>>;
 }
 
 trait ChannelBatchSender<T>: Send {
@@ -98,15 +102,12 @@ impl<T: Send> ChannelSender<T> for batch_channel::Sender<T> {
 
     fn autobatch<F>(self, batch_limit: usize, f: F) -> impl Future<Output = ()> + Send
     where
-        for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static,
+        F: for<'a> AsyncCallback<'a, &'a mut Self::BatchSender, Result<(), SendError<()>>>
     {
         async move {
-            batch_channel::Sender::autobatch(self, batch_limit, |tx| {
-                async move {
-                    () = f(tx).await;
-                    Ok(())
-                }
-                .boxed()
+            batch_channel::Sender::autobatch(self, batch_limit, async move |tx: &mut batch_channel::BatchSender<T>| {
+                () = f(tx).await?;
+                Ok(())
             })
             .await
             .expect("in this benchmark, receiver never drops")
@@ -339,11 +340,9 @@ impl<T: Send + 'static> ChannelSender<T> for async_channel::Sender<T> {
 
     fn autobatch<F>(mut self, _batch_limit: usize, f: F) -> impl Future<Output = ()> + Send
     where
-        for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static,
+        F: for<'a> AsyncCallback<'a, &'a mut Self::BatchSender, Result<(), SendError<()>>>
     {
-        async move {
-            f(&mut self).await;
-        }
+        f(&mut self)
     }
 }
 
@@ -422,7 +421,7 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
         let tx = tx.clone();
         senders.push(tokio::spawn(
             async move {
-                tx.autobatch(options.tx_batch_size, move |tx| {
+                tx.autobatch(options.tx_batch_size, move |tx: C::Sender::<(u64, u64)>::BatchSender | {
                     async move {
                         for i in 0..send_count {
                             tx.send((task_id, i)).await;

@@ -19,7 +19,6 @@ parking_lot = ["pinned-mutex/parking_lot"]
 fast = ["parking_lot"]
 
 [dependencies]
-futures-core = "0.3"
 pin-project = "1.1"
 pinned-mutex = "0.3.2"
 splitrc = "0.1.11"

@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("example.md")]
 
-use futures_core::future::BoxFuture;
 use mutex::PinnedCondvar as Condvar;
 use mutex::PinnedMutex as Mutex;
 use mutex::PinnedMutexGuard as MutexGuard;
@@ -502,7 +501,7 @@ impl<T> Sender<T> {
     /// Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
     pub async fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
     where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
+        F: for<'a> AsyncCallback<'a, &'a mut BatchSender<T>, Result<R, SendError<()>>>
     {
         let mut tx = BatchSender {
             sender: self,
@@ -521,10 +520,18 @@ impl<T> Sender<T> {
     /// [SendError]) is considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
+        F: for<'a> AsyncCallback<'a, &'a mut BatchSender<T>, Result<(), SendError<()>>>
     {
         self.autobatch(capacity, f).await.unwrap_or(())
     }
+}
+
+pub trait AsyncCallback<'a, A: 'a, R: 'a>: FnOnce(A) -> Self::Fut {
+    type Fut: Future<Output = R>;
+}
+
+impl<'a, A: 'a, R: 'a, Out: Future<Output = R>, F: FnOnce(A) -> Out> AsyncCallback<'a, A, R> for F {
+    type Fut = Out;
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
