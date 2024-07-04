@@ -500,6 +500,11 @@ impl<T> Sender<T> {
     /// The callback's future must be boxed to work around [type
     /// system limitations in
     /// Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
+    ///
+    /// There is [a git
+    /// branch](https://github.com/chadaustin/batch-channel/tree/async-closure-autobatch)
+    /// that shows what an API based on async closures would look
+    /// like.
     pub async fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
     where
         for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
