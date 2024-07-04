@@ -515,10 +515,10 @@ impl<T> Sender<T> {
     }
 
     /// Same as [Sender::autobatch] except that it immediately returns
-    /// () when `f` returns [SendError]. This is a convenience wrapper
-    /// for the common case that the future is passed to a spawn
-    /// function and the receiver being dropped (i.e. [SendError]) is
-    /// considered a clean cancellation.
+    /// `()` when `f` returns [SendError]. This is a convenience
+    /// wrapper for the common case that the future is passed to a
+    /// spawn function and the receiver being dropped (i.e.
+    /// [SendError]) is considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
         for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
