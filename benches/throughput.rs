@@ -135,7 +135,10 @@ impl<T: Send> ChannelReceiver<T> for batch_channel::Receiver<T> {
 }
 
 impl<T: Send> ChannelSyncSender<T> for batch_channel::SyncSender<T> {
-    type BatchSenderSync<'a> = batch_channel::SyncBatchSender<'a, T> where T: 'a;
+    type BatchSenderSync<'a>
+        = batch_channel::SyncBatchSender<'a, T>
+    where
+        T: 'a;
 
     fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where
@@ -236,7 +239,10 @@ impl ChannelSync for KanalChannel {
 }
 
 impl<T: Send> ChannelSyncSender<T> for kanal::Sender<T> {
-    type BatchSenderSync<'a> = kanal::Sender<T> where T: 'a;
+    type BatchSenderSync<'a>
+        = kanal::Sender<T>
+    where
+        T: 'a;
 
     fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
@@ -286,7 +292,10 @@ impl ChannelSync for CrossbeamChannel {
 }
 
 impl<T: Send> ChannelSyncSender<T> for crossbeam::channel::Sender<T> {
-    type BatchSenderSync<'a> = crossbeam::channel::Sender<T> where T: 'a;
+    type BatchSenderSync<'a>
+        = crossbeam::channel::Sender<T>
+    where
+        T: 'a;
 
     fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
