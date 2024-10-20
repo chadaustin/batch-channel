@@ -253,7 +253,6 @@ dependencies = [
  "crossbeam",
  "divan",
  "futures",
- "futures-core",
  "kanal",
  "lazy_static",
  "parking_lot",

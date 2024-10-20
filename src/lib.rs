@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("example.md")]
 
-use futures_core::future::BoxFuture;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt;
@@ -457,14 +456,14 @@ impl<T> Sender<T> {
     /// Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
     pub async fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
     where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
+        for<'arg> F: AutobatchFn<'arg, T, Output = Result<R, SendError<()>>>,
     {
         let mut tx = BatchSender {
             sender: self,
             batch_limit,
             buffer: Vec::with_capacity(batch_limit),
         };
-        let r = f(&mut tx).await?;
+        let r = f.call(&mut tx).await?;
         tx.drain().await?;
         Ok(r)
     }
@@ -476,7 +475,7 @@ impl<T> Sender<T> {
     /// considered a clean cancellation.
     pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
     where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
+        for<'env> F: AutobatchFn<'env, T, Output = Result<(), SendError<()>>>,
     {
         self.autobatch(capacity, f).await.unwrap_or(())
     }
@@ -911,3 +910,40 @@ pub fn unbounded_sync<T>() -> (SyncSender<T>, SyncReceiver<T>) {
     let (tx, rx) = unbounded();
     (tx.into_sync(), rx.into_sync())
 }
+
+// Internal Utilities
+
+pub trait AutobatchFn<'arg, T: 'arg> {
+    type Output;
+    type Call: Future<Output = Self::Output> + 'arg;
+    fn call(self, tx: &'arg mut BatchSender<T>) -> Self::Call;
+}
+
+impl<'env, 'arg, T: 'arg, FN, F, R> AutobatchFn<'arg, T> for FN
+where
+    FN: FnOnce(&'arg mut BatchSender<T>) -> F,
+    FN: 'env + 'arg,
+    F: Future<Output = R> + 'arg + 'env,
+    'arg: 'env,
+{
+    type Output = R;
+    type Call = F;
+    fn call(self, tx: &'arg mut BatchSender<T>) -> Self::Call {
+        (self)(tx)
+    }
+}
+
+/*
+impl<FN, F, T, R> AutobatchFn<T, R> for FN
+where
+    for<'a> (
+    FN: FnOnce(&'a mut BatchSender<T>) -> F,
+    F: Future<Output = R> + 'a,
+    T: 'a,)
+{
+    type Output = F;
+    async fn call(self, tx: &'a mut BatchSender<T>) -> Self::Call<'a> {
+        (self)(tx).await
+    }
+}
+ */

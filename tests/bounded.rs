@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
+use batch_channel::BatchSender;
 use batch_channel::SendError;
-use futures::FutureExt;
 
 mod fixture;
 use fixture::*;
@@ -146,40 +146,37 @@ fn send_batch_blocks_as_needed() {
 #[test]
 fn autobatch_batches() {
     let mut pool = LocalPool::new();
-    let state = AtomicVar::new("");
+    let state = AtomicVar::new(0);
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
     pool.spawn(async move {
-        tx.autobatch(2, move |tx| {
-            async move {
-                inner.set("0");
-                tx.send(1).await?;
-                inner.set("1");
-                tx.send(2).await?;
-                inner.set("2");
-                tx.send(3).await?;
-                inner.set("3");
-                tx.send(4).await?;
-                inner.set("4");
-                Ok(())
-            }
-            .boxed()
+        tx.autobatch(2, move |tx: &mut BatchSender<i32>| async move {
+            inner.set(1);
+            tx.send(1).await?;
+            inner.set(2);
+            tx.send(2).await?;
+            inner.set(3);
+            tx.send(3).await?;
+            inner.set(4);
+            tx.send(4).await?;
+            inner.set(5);
+            Ok(())
         })
         .await
         .unwrap()
     });
 
     pool.run_until_stalled();
-    assert_eq!("1", state.get());
+    assert_eq!(2, state.get());
     assert_eq!(Some(1), pool.run_until(rx.recv()));
-    assert_eq!("1", state.get());
+    assert_eq!(2, state.get());
     assert_eq!(Some(2), pool.run_until(rx.recv()));
-    assert_eq!("3", state.get());
+    assert_eq!(4, state.get());
     assert_eq!(Some(3), pool.run_until(rx.recv()));
-    assert_eq!("3", state.get());
+    assert_eq!(4, state.get());
     assert_eq!(Some(4), pool.run_until(rx.recv()));
-    assert_eq!("4", state.get());
+    assert_eq!(5, state.get());
     assert_eq!(None, pool.run_until(rx.recv()));
 }
 
@@ -190,8 +187,8 @@ fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
-    pool.spawn(tx.autobatch_or_cancel(2, move |tx| {
-        async move {
+    pool.spawn(
+        tx.autobatch_or_cancel(2, move |tx: &mut BatchSender<_>| async move {
             inner.set("0");
             tx.send(1).await?;
             inner.set("1");
@@ -202,9 +199,8 @@ fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
             tx.send(4).await?;
             inner.set("4");
             Ok(())
-        }
-        .boxed()
-    }));
+        }),
+    );
 
     pool.run_until_stalled();
     assert_eq!("1", state.get());
