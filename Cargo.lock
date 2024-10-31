@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "batch-channel"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-channel 2.3.1",
