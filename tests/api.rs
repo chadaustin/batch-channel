@@ -1,6 +1,11 @@
+use futures::pin_mut;
+use std::future::Future;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::task::Poll;
+use std::task::Wake;
 
 #[test]
 fn sync_to_async_and_back() {
@@ -63,4 +68,26 @@ fn closing_rx_drops_elements() {
     assert_eq!(2, COUNT.load(Ordering::Acquire));
     drop(rx);
     assert_eq!(0, COUNT.load(Ordering::Acquire));
+}
+
+struct TestWake;
+
+impl Wake for TestWake {
+    fn wake(self: Arc<Self>) {}
+}
+
+#[test]
+fn cancel_send() {
+    let waker = Arc::new(TestWake).into();
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let (tx, _rx) = batch_channel::bounded(1);
+    let send_fut = tx.send('a');
+    pin_mut!(send_fut);
+    assert_eq!(Poll::Ready(Ok(())), send_fut.poll(&mut cx));
+
+    let send_fut = tx.send('b');
+    pin_mut!(send_fut);
+    assert_eq!(Poll::Pending, send_fut.as_mut().poll(&mut cx));
+    drop(send_fut);
 }

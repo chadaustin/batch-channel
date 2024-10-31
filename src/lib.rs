@@ -6,6 +6,7 @@ use mutex::PinnedCondvar as Condvar;
 use mutex::PinnedMutex as Mutex;
 use mutex::PinnedMutexGuard as MutexGuard;
 use pin_project::pin_project;
+use pin_project::pinned_drop;
 #[cfg(feature = "parking_lot")]
 use pinned_mutex::parking_lot as mutex;
 #[cfg(not(feature = "parking_lot"))]
@@ -533,12 +534,27 @@ impl<T> Sender<T> {
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[pin_project]
+#[pin_project(PinnedDrop)]
 struct Send<'a, T> {
     sender: &'a Sender<T>,
     value: Option<T>,
     #[pin]
     waker: WakerSlot,
+}
+
+#[pinned_drop]
+impl<T> PinnedDrop for Send<'_, T> {
+    fn drop(mut self: Pin<&mut Self>) {
+        if self.waker.is_linked() {
+            let mut state = self.sender.core.as_ref().project_ref().state.lock();
+            state
+                .as_mut()
+                .base()
+                .project()
+                .tx_wakers
+                .unlink(self.project().waker);
+        }
+    }
 }
 
 impl<'a, T> Future for Send<'a, T> {
