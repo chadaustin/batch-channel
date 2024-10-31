@@ -92,7 +92,6 @@ fn cancel_send() {
     drop(send_fut);
 }
 
-
 #[test]
 fn cancel_send_iter() {
     let waker = Arc::new(TestWake).into();
@@ -112,6 +111,18 @@ fn cancel_recv() {
 
     let (_tx, rx) = batch_channel::bounded::<char>(1);
     let recv_fut = rx.recv();
+    pin_mut!(recv_fut);
+    assert_eq!(Poll::Pending, recv_fut.as_mut().poll(&mut cx));
+    drop(recv_fut);
+}
+
+#[test]
+fn cancel_recv_batch() {
+    let waker = Arc::new(TestWake).into();
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let (_tx, rx) = batch_channel::bounded::<char>(1);
+    let recv_fut = rx.recv_batch(100);
     pin_mut!(recv_fut);
     assert_eq!(Poll::Pending, recv_fut.as_mut().poll(&mut cx));
     drop(recv_fut);

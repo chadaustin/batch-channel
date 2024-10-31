@@ -754,12 +754,27 @@ impl<T> Future for Recv<'_, T> {
 }
 
 #[must_use = "futures do nothing unless you .await or poll them"]
-#[pin_project]
+#[pin_project(PinnedDrop)]
 struct RecvBatch<'a, T> {
     receiver: &'a Receiver<T>,
     element_limit: usize,
     #[pin]
     waker: WakerSlot,
+}
+
+#[pinned_drop]
+impl<T> PinnedDrop for RecvBatch<'_, T> {
+    fn drop(mut self: Pin<&mut Self>) {
+        if self.waker.is_linked() {
+            let mut state = self.receiver.core.as_ref().project_ref().state.lock();
+            state
+                .as_mut()
+                .base()
+                .project()
+                .rx_wakers
+                .unlink(self.project().waker);
+        }
+    }
 }
 
 impl<T> Future for RecvBatch<'_, T> {
