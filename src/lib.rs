@@ -413,7 +413,7 @@ pub struct SyncBatchSender<'a, T> {
     buffer: Vec<T>,
 }
 
-impl<'a, T> SyncBatchSender<'a, T> {
+impl<T> SyncBatchSender<'_, T> {
     /// Buffers a single value to be sent on the channel.
     ///
     /// Sends the batch if the buffer is full.
@@ -557,7 +557,7 @@ impl<T> PinnedDrop for Send<'_, T> {
     }
 }
 
-impl<'a, T> Future for Send<'a, T> {
+impl<T> Future for Send<'_, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -588,7 +588,7 @@ struct SendIter<'a, T, I: Iterator<Item = T>> {
     waker: WakerSlot,
 }
 
-impl<'a, T, I: Iterator<Item = T>> Future for SendIter<'a, T, I> {
+impl<T, I: Iterator<Item = T>> Future for SendIter<'_, T, I> {
     type Output = Result<(), SendError<()>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -702,7 +702,7 @@ struct Recv<'a, T> {
     waker: WakerSlot,
 }
 
-impl<'a, T> Future for Recv<'a, T> {
+impl<T> Future for Recv<'_, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -732,7 +732,7 @@ struct RecvBatch<'a, T> {
     waker: WakerSlot,
 }
 
-impl<'a, T> Future for RecvBatch<'a, T> {
+impl<T> Future for RecvBatch<'_, T> {
     type Output = Vec<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -764,7 +764,7 @@ struct RecvVec<'a, T> {
     waker: WakerSlot,
 }
 
-impl<'a, T> Future for RecvVec<'a, T> {
+impl<T> Future for RecvVec<'_, T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
