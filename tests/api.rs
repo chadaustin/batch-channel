@@ -91,3 +91,16 @@ fn cancel_send() {
     assert_eq!(Poll::Pending, send_fut.as_mut().poll(&mut cx));
     drop(send_fut);
 }
+
+
+#[test]
+fn cancel_send_iter() {
+    let waker = Arc::new(TestWake).into();
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let (tx, _rx) = batch_channel::bounded(1);
+    let send_fut = tx.send_iter(vec!['a', 'b']);
+    pin_mut!(send_fut);
+    assert_eq!(Poll::Pending, send_fut.as_mut().poll(&mut cx));
+    drop(send_fut);
+}

@@ -580,12 +580,27 @@ impl<T> Future for Send<'_, T> {
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[pin_project]
+#[pin_project(PinnedDrop)]
 struct SendIter<'a, T, I: Iterator<Item = T>> {
     sender: &'a Sender<T>,
     values: Option<Peekable<I>>,
     #[pin]
     waker: WakerSlot,
+}
+
+#[pinned_drop]
+impl<T, I: Iterator<Item = T>> PinnedDrop for SendIter<'_, T, I> {
+    fn drop(mut self: Pin<&mut Self>) {
+        if self.waker.is_linked() {
+            let mut state = self.sender.core.as_ref().project_ref().state.lock();
+            state
+                .as_mut()
+                .base()
+                .project()
+                .tx_wakers
+                .unlink(self.project().waker);
+        }
+    }
 }
 
 impl<T, I: Iterator<Item = T>> Future for SendIter<'_, T, I> {
