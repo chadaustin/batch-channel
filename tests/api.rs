@@ -127,3 +127,16 @@ fn cancel_recv_batch() {
     assert_eq!(Poll::Pending, recv_fut.as_mut().poll(&mut cx));
     drop(recv_fut);
 }
+
+#[test]
+fn cancel_recv_vec() {
+    let waker = Arc::new(TestWake).into();
+    let mut cx = std::task::Context::from_waker(&waker);
+
+    let (_tx, rx) = batch_channel::bounded::<char>(1);
+    let mut v = Vec::with_capacity(100);
+    let recv_fut = rx.recv_vec(v.capacity(), &mut v);
+    pin_mut!(recv_fut);
+    assert_eq!(Poll::Pending, recv_fut.as_mut().poll(&mut cx));
+    drop(recv_fut);
+}
