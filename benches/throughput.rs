@@ -2,6 +2,7 @@ use clap::Parser;
 use clap::Subcommand;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use std::future::Future;
 use std::time::Duration;
@@ -535,6 +536,8 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     }
 }
 
+// These exist to allow `cargo bench` to run this benchmark while
+// selecting filters from other
 #[derive(Debug, Subcommand)]
 enum Commands {
     Throughput {
@@ -563,6 +566,15 @@ struct Args {
     #[arg(long)]
     csv: bool,
 
+    #[arg(long)]
+    threads: Option<usize>,
+
+    #[arg(long)]
+    tx_batch: Option<Vec<usize>>,
+
+    #[arg(long)]
+    rx_batch: Option<Vec<usize>>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -570,6 +582,9 @@ struct Args {
 lazy_static! {
     static ref ARGS: Args = Args::parse();
 }
+
+const DEFAULT_THREAD_COUNT: usize = 8;
+const DEFAULT_BATCH_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256];
 
 fn main() {
     match ARGS.command {
@@ -580,12 +595,35 @@ fn main() {
         }
     }
 
+    let thread_count = ARGS.threads.unwrap_or(DEFAULT_THREAD_COUNT);
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(8)
+        .worker_threads(thread_count)
         .build()
         .expect("failed to create tokio runtime");
 
-    let batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+    let batch_sizes: Vec<(usize, usize)> = match (&ARGS.tx_batch, &ARGS.rx_batch) {
+        (Some(tx_batch), Some(rx_batch)) => tx_batch
+            .iter()
+            .copied()
+            .cartesian_product(rx_batch.iter().copied())
+            .collect(),
+        (Some(tx_batch), None) => tx_batch
+            .iter()
+            .copied()
+            .cartesian_product(DEFAULT_BATCH_SIZES.iter().copied())
+            .collect(),
+        (None, Some(rx_batch)) => DEFAULT_BATCH_SIZES
+            .iter()
+            .copied()
+            .cartesian_product(rx_batch.iter().copied())
+            .collect(),
+        (None, None) => DEFAULT_BATCH_SIZES
+            .iter()
+            .copied()
+            .map(|s| (s, s))
+            .collect(),
+    };
 
     async fn bench_async<C: Channel>(name: &str, options: Options, channel: C) {
         if !ARGS.csv {
@@ -650,14 +688,14 @@ fn main() {
             println!();
             println!("throughput async (tx={} rx={})", tx_count, rx_count);
         }
-        for batch_size in batch_sizes {
+        for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
             if !ARGS.csv {
-                println!("  batch={}", batch_size);
+                println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
             }
 
             run_batch_async_with_options(Options {
-                tx_batch_size: batch_size,
-                rx_batch_size: batch_size,
+                tx_batch_size,
+                rx_batch_size,
                 tx_count,
                 rx_count,
             });
@@ -667,14 +705,14 @@ fn main() {
             println!();
             println!("throughput sync (tx={} rx={})", tx_count, rx_count);
         }
-        for batch_size in batch_sizes {
+        for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
             if !ARGS.csv {
-                println!("  batch={}", batch_size);
+                println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
             }
 
             run_batch_sync_with_options(Options {
-                tx_batch_size: batch_size,
-                rx_batch_size: batch_size,
+                tx_batch_size,
+                rx_batch_size,
                 tx_count,
                 rx_count,
             });
