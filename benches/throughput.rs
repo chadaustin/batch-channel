@@ -406,7 +406,12 @@ struct Timings {
 
 impl Timings {
     fn print(&self) {
-        println!("{:?}, {:?} per item", self.total, self.per_item,)
+        println!(
+            "{:?}, {:?} per item, {:.2e} items/s",
+            self.total,
+            self.per_item,
+            1f64 / self.per_item.as_secs_f64()
+        )
     }
 }
 
