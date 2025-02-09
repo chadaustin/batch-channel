@@ -583,19 +583,20 @@ lazy_static! {
     static ref ARGS: Args = Args::parse();
 }
 
-const DEFAULT_THREAD_COUNT: usize = 8;
 const DEFAULT_BATCH_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256];
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     match ARGS.command {
         Some(Commands::Throughput { .. }) => (),
         None => (),
         _ => {
-            return;
+            return Ok(());
         }
     }
 
-    let thread_count = ARGS.threads.unwrap_or(DEFAULT_THREAD_COUNT);
+    let thread_count = ARGS
+        .threads
+        .unwrap_or(std::thread::available_parallelism()?.get());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(thread_count)
@@ -718,4 +719,6 @@ fn main() {
             });
         }
     }
+
+    Ok(())
 }
