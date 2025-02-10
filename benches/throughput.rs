@@ -575,6 +575,12 @@ struct Args {
     threads: Option<usize>,
 
     #[arg(long)]
+    txs: Option<Vec<usize>>,
+
+    #[arg(long)]
+    rxs: Option<Vec<usize>>,
+
+    #[arg(long)]
     tx_batch: Option<Vec<usize>>,
 
     #[arg(long)]
@@ -587,6 +593,8 @@ struct Args {
 lazy_static! {
     static ref ARGS: Args = Args::parse();
 }
+
+const DEFAULT_TASK_COUNTS: &[usize] = &[1, 4];
 
 const DEFAULT_BATCH_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256];
 
@@ -607,6 +615,29 @@ fn main() -> anyhow::Result<()> {
         .worker_threads(thread_count)
         .build()
         .expect("failed to create tokio runtime");
+
+    let task_counts: Vec<(usize, usize)> = match (&ARGS.txs, &ARGS.rxs) {
+        (Some(tx), Some(rx)) => tx
+            .iter()
+            .copied()
+            .cartesian_product(rx.iter().copied())
+            .collect(),
+        (Some(tx), None) => tx
+            .iter()
+            .copied()
+            .cartesian_product(DEFAULT_TASK_COUNTS.iter().copied())
+            .collect(),
+        (None, Some(rx)) => DEFAULT_TASK_COUNTS
+            .iter()
+            .copied()
+            .cartesian_product(rx.iter().copied())
+            .collect(),
+        (None, None) => DEFAULT_TASK_COUNTS
+            .iter()
+            .copied()
+            .cartesian_product(DEFAULT_TASK_COUNTS.iter().copied())
+            .collect(),
+    };
 
     let batch_sizes: Vec<(usize, usize)> = match (&ARGS.tx_batch, &ARGS.rx_batch) {
         (Some(tx_batch), Some(rx_batch)) => tx_batch
@@ -689,7 +720,7 @@ fn main() -> anyhow::Result<()> {
         println!("mode,channel,tx,rx,tx_batch_size,rx_batch_size,total_ns,per_item_ns");
     }
 
-    for (tx_count, rx_count) in [(1, 1), (4, 1), (4, 4)] {
+    for (tx_count, rx_count) in task_counts.iter().copied() {
         if !ARGS.csv {
             println!();
             println!("throughput async (tx={} rx={})", tx_count, rx_count);
