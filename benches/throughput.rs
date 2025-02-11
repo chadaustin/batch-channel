@@ -53,6 +53,8 @@ trait ChannelSyncSender<T>: Clone + Send {
     where
         T: 'a;
 
+    fn send(&mut self, value: T);
+
     fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where
         F: FnOnce(&mut Self::BatchSenderSync<'a>);
@@ -140,6 +142,12 @@ impl<T: Send> ChannelSyncSender<T> for batch_channel::SyncSender<T> {
         = batch_channel::SyncBatchSender<'a, T>
     where
         T: 'a;
+
+    fn send(&mut self, value: T) {
+        let Ok(()) = batch_channel::SyncSender::send(self, value) else {
+            panic!("in this benchmark, receiver never drops");
+        };
+    }
 
     fn autobatch<'a, F>(&'a mut self, batch_limit: usize, f: F)
     where
@@ -245,6 +253,12 @@ impl<T: Send> ChannelSyncSender<T> for kanal::Sender<T> {
     where
         T: 'a;
 
+    fn send(&mut self, value: T) {
+        let Ok(()) = kanal::Sender::send(self, value) else {
+            panic!("in this benchmark, receiver never drops");
+        };
+    }
+
     fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
         F: FnOnce(&mut Self::BatchSenderSync<'a>),
@@ -297,6 +311,12 @@ impl<T: Send> ChannelSyncSender<T> for crossbeam::channel::Sender<T> {
         = crossbeam::channel::Sender<T>
     where
         T: 'a;
+
+    fn send(&mut self, value: T) {
+        let Ok(()) = crossbeam::channel::Sender::send(self, value) else {
+            panic!("in this benchmark, receiver never drops");
+        };
+    }
 
     fn autobatch<'a, F>(&'a mut self, _batch_limit: usize, f: F)
     where
@@ -504,11 +524,17 @@ fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings 
     for task_id in 0..options.tx_count {
         let mut tx = tx.clone();
         senders.push(std::thread::spawn(move || {
-            tx.autobatch(options.tx_batch_size, move |tx| {
+            if options.tx_batch_size == 1 {
                 for i in 0..send_count {
                     tx.send((task_id, i));
                 }
-            })
+            } else {
+                tx.autobatch(options.tx_batch_size, move |tx| {
+                    for i in 0..send_count {
+                        tx.send((task_id, i));
+                    }
+                })
+            }
         }));
     }
     drop(tx);
