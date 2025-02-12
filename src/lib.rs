@@ -231,6 +231,29 @@ impl<T> Core<T> {
         }
     }
 
+    fn wake_one_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
+        // The lock is held. Therefore, we know whether a Condvar must be notified or not.
+        let cvar = self.not_empty.get();
+        let mut wakers = state
+            .as_mut()
+            .project()
+            .base
+            .project()
+            .rx_wakers
+            .extract_some_wakers();
+        drop(state);
+        if let Some(cvar) = cvar {
+            cvar.notify_one();
+        }
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        while wakers.wake_all() {
+            let mut state = self.project_ref().state.lock();
+            wakers.extract_more(state.as_mut().project().base.project().rx_wakers);
+        }
+    }
+
     fn wake_all_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
@@ -318,7 +341,7 @@ impl<T> SyncSender<T> {
 
         state.as_mut().project().queue.push_back(value);
 
-        self.core.as_ref().wake_all_rx(state);
+        self.core.as_ref().wake_one_rx(state);
         Ok(())
     }
 
@@ -338,6 +361,8 @@ impl<T> SyncSender<T> {
             return Ok(());
         };
 
+        let mut sent_count = 0usize;
+
         let mut state = self.core.as_ref().block_until_not_full();
         'outer: loop {
             if state.closed {
@@ -349,11 +374,13 @@ impl<T> SyncSender<T> {
 
             debug_assert!(state.has_capacity());
             state.as_mut().project().queue.push_back(value);
+            sent_count += 1;
             loop {
                 match values.next() {
                     Some(v) => {
                         if state.has_capacity() {
                             state.as_mut().project().queue.push_back(v);
+                            sent_count += 1;
                         } else {
                             value = v;
                             // We're about to block, but we know we
@@ -366,7 +393,11 @@ impl<T> SyncSender<T> {
                     None => {
                         // Done pulling from the iterator and know we
                         // sent at least one value.
-                        self.core.as_ref().wake_all_rx(state);
+                        if sent_count == 1 {
+                            self.core.as_ref().wake_one_rx(state);
+                        } else {
+                            self.core.as_ref().wake_all_rx(state);
+                        }
                         return Ok(());
                     }
                 }
@@ -571,7 +602,7 @@ impl<T> Future for Send<'_, T> {
                 .project()
                 .queue
                 .push_back(self.as_mut().project().value.take().unwrap());
-            self.project().sender.core.as_ref().wake_all_rx(state);
+            self.project().sender.core.as_ref().wake_one_rx(state);
             Poll::Ready(Ok(()))
         } else {
             state.as_mut().base().pending_tx(self.project().waker, cx)
@@ -647,6 +678,7 @@ impl<T, I: Iterator<Item = T>> Future for SendIter<'_, T, I> {
                     None => {
                         // Done pulling from the iterator and still
                         // have capacity, so we're done.
+                        // TODO: wake_one_rx if we only queued one.
                         self.sender.core.as_ref().wake_all_rx(state);
                         return Poll::Ready(Ok(()));
                     }
