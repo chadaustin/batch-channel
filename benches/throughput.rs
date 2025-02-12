@@ -600,6 +600,12 @@ struct Args {
     #[arg(long)]
     threads: Option<usize>,
 
+    #[arg(long, action=clap::ArgAction::Set, default_value_t=true)]
+    sync: bool,
+
+    #[arg(long, action=clap::ArgAction::Set, default_value_t=true)]
+    r#async: bool,
+
     #[arg(long)]
     txs: Option<Vec<usize>>,
 
@@ -747,38 +753,42 @@ fn main() -> anyhow::Result<()> {
     }
 
     for (tx_count, rx_count) in task_counts.iter().copied() {
-        if !ARGS.csv {
-            println!();
-            println!("throughput async (tx={} rx={})", tx_count, rx_count);
-        }
-        for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
+        if ARGS.r#async {
             if !ARGS.csv {
-                println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
+                println!();
+                println!("throughput async (tx={} rx={})", tx_count, rx_count);
             }
+            for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
+                if !ARGS.csv {
+                    println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
+                }
 
-            run_batch_async_with_options(Options {
-                tx_batch_size,
-                rx_batch_size,
-                tx_count,
-                rx_count,
-            });
+                run_batch_async_with_options(Options {
+                    tx_batch_size,
+                    rx_batch_size,
+                    tx_count,
+                    rx_count,
+                });
+            }
         }
 
-        if !ARGS.csv {
-            println!();
-            println!("throughput sync (tx={} rx={})", tx_count, rx_count);
-        }
-        for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
+        if ARGS.sync {
             if !ARGS.csv {
-                println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
+                println!();
+                println!("throughput sync (tx={} rx={})", tx_count, rx_count);
             }
+            for (tx_batch_size, rx_batch_size) in batch_sizes.iter().copied() {
+                if !ARGS.csv {
+                    println!("  tx_batch={tx_batch_size}, rx_batch={rx_batch_size}");
+                }
 
-            run_batch_sync_with_options(Options {
-                tx_batch_size,
-                rx_batch_size,
-                tx_count,
-                rx_count,
-            });
+                run_batch_sync_with_options(Options {
+                    tx_batch_size,
+                    rx_batch_size,
+                    tx_count,
+                    rx_count,
+                });
+            }
         }
     }
 
