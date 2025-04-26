@@ -14,6 +14,9 @@ categories = ["asynchronous"]
 inherits = "release"
 debug = true
 
+[profile.bench]
+debug = true
+
 [features]
 parking_lot = ["pinned-mutex/parking_lot"]
 fast = ["parking_lot"]
