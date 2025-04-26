@@ -103,13 +103,12 @@ impl<T: Send> ChannelSender<T> for batch_channel::Sender<T> {
     where
         for<'a> F: (FnOnce(&'a mut Self::BatchSender) -> BoxFuture<'a, ()>) + Send + 'static,
     {
+        let f = f;
         async move {
-            batch_channel::Sender::autobatch(self, batch_limit, |tx| {
-                async move {
-                    () = f(tx).await;
-                    Ok(())
-                }
-                .boxed()
+            let f = f;
+            batch_channel::Sender::autobatch(self, batch_limit, async move |tx| {
+                () = f(tx).await;
+                Ok(())
             })
             .await
             .expect("in this benchmark, receiver never drops")

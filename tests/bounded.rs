@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use batch_channel::SendError;
-use futures::FutureExt;
 
 mod fixture;
 use fixture::*;
@@ -151,20 +150,17 @@ fn autobatch_batches() {
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
     pool.spawn(async move {
-        tx.autobatch(2, move |tx| {
-            async move {
-                inner.set("0");
-                tx.send(1).await?;
-                inner.set("1");
-                tx.send(2).await?;
-                inner.set("2");
-                tx.send(3).await?;
-                inner.set("3");
-                tx.send(4).await?;
-                inner.set("4");
-                Ok(())
-            }
-            .boxed()
+        tx.autobatch(2, async move |tx| {
+            inner.set("0");
+            tx.send(1).await?;
+            inner.set("1");
+            tx.send(2).await?;
+            inner.set("2");
+            tx.send(3).await?;
+            inner.set("3");
+            tx.send(4).await?;
+            inner.set("4");
+            Ok(())
         })
         .await
         .unwrap()
@@ -190,20 +186,17 @@ fn autobatch_or_cancel_stops_if_receiver_is_dropped() {
 
     let (tx, rx) = batch_channel::bounded(1);
     let inner = state.clone();
-    pool.spawn(tx.autobatch_or_cancel(2, move |tx| {
-        async move {
-            inner.set("0");
-            tx.send(1).await?;
-            inner.set("1");
-            tx.send(2).await?;
-            inner.set("2");
-            tx.send(3).await?;
-            inner.set("3");
-            tx.send(4).await?;
-            inner.set("4");
-            Ok(())
-        }
-        .boxed()
+    pool.spawn(tx.autobatch_or_cancel(2, async move |tx| {
+        inner.set("0");
+        tx.send(1).await?;
+        inner.set("1");
+        tx.send(2).await?;
+        inner.set("2");
+        tx.send(3).await?;
+        inner.set("3");
+        tx.send(4).await?;
+        inner.set("4");
+        Ok(())
     }));
 
     pool.run_until_stalled();

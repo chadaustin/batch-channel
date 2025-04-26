@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("example.md")]
 
-use futures_core::future::BoxFuture;
 use mutex::PinnedCondvar as Condvar;
 use mutex::PinnedMutex as Mutex;
 use mutex::PinnedMutexGuard as MutexGuard;
@@ -16,6 +15,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::iter::Peekable;
+use std::ops::AsyncFnOnce;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::task::Context;
@@ -528,19 +528,11 @@ impl<T> Sender<T> {
 
     /// Automatically accumulate sends into a buffer of size `batch_limit`
     /// and send when full.
-    ///
-    /// The callback's future must be boxed to work around [type
-    /// system limitations in
-    /// Rust](https://smallcultfollowing.com/babysteps/blog/2023/03/29/thoughts-on-async-closures/).
-    ///
-    /// There is [a git
-    /// branch](https://github.com/chadaustin/batch-channel/tree/async-closure-autobatch)
-    /// that shows what an API based on async closures would look
-    /// like.
-    pub async fn autobatch<F, R>(self, batch_limit: usize, f: F) -> Result<R, SendError<()>>
-    where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<R, SendError<()>>>),
-    {
+    pub async fn autobatch<R>(
+        self,
+        batch_limit: usize,
+        f: impl AsyncFnOnce(&mut BatchSender<T>) -> Result<R, SendError<()>>,
+    ) -> Result<R, SendError<()>> {
         let mut tx = BatchSender {
             sender: self,
             batch_limit,
@@ -556,10 +548,11 @@ impl<T> Sender<T> {
     /// wrapper for the common case that the future is passed to a
     /// spawn function and the receiver being dropped (i.e.
     /// [SendError]) is considered a clean cancellation.
-    pub async fn autobatch_or_cancel<F>(self, capacity: usize, f: F)
-    where
-        for<'a> F: (FnOnce(&'a mut BatchSender<T>) -> BoxFuture<'a, Result<(), SendError<()>>>),
-    {
+    pub async fn autobatch_or_cancel(
+        self,
+        capacity: usize,
+        f: impl AsyncFnOnce(&mut BatchSender<T>) -> Result<(), SendError<()>>,
+    ) {
         self.autobatch(capacity, f).await.unwrap_or(())
     }
 }
