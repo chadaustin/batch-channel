@@ -437,14 +437,7 @@ impl Timings {
 
 async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 2
-        * 1024
-        * 1024
-        * (if C::HAS_BATCH {
-            options.tx_batch_size
-        } else {
-            1
-        });
+    let send_count: usize = 2 * 1024 * 1024;
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::with_capacity(options.tx_count);
@@ -505,14 +498,7 @@ async fn benchmark_throughput_async<C: Channel>(_: C, options: Options) -> Timin
 
 fn benchmark_throughput_sync<C: ChannelSync>(_: C, options: Options) -> Timings {
     const CAPACITY: usize = 65536;
-    let send_count: usize = 1
-        * 1024
-        * 1024
-        * (if C::HAS_BATCH {
-            options.tx_batch_size
-        } else {
-            1
-        });
+    let send_count: usize = 1 * 1024 * 1024;
     let total_items = send_count * options.tx_count;
 
     let mut senders = Vec::with_capacity(options.tx_count);
