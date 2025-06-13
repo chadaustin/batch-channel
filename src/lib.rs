@@ -20,6 +20,7 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 use std::task::Context;
 use std::task::Poll;
+use wakerset::ExtractedWakers;
 use wakerset::WakerList;
 use wakerset::WakerSlot;
 
@@ -169,35 +170,46 @@ impl<T> Core<T> {
         // The lock is held. Therefore, we know whether a Condvar must
         // be notified or not.
         let cvar = self.not_empty.get();
+
         // We should not wake Wakers while a lock is held. Therefore,
         // we must release the lock and reacquire it to wait.
-        let mut wakers = state
+        let round = state
             .as_mut()
             .project()
             .base
             .project()
             .rx_wakers
-            .extract_some_wakers();
+            .begin_extraction();
+        let mut wakers = ExtractedWakers::new();
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        loop {
+            let more = state
+                .as_mut()
+                .project()
+                .base
+                .project()
+                .rx_wakers
+                .extract_some_wakers(round, &mut wakers);
+            drop(state);
+            wakers.wake_all();
+            if !more {
+                break;
+            }
+            state = self.project_ref().state.lock();
+        }
 
         // TODO: Avoid unlocking and locking again when there's no
         // waker or condition variable.
 
-        drop(state);
         if let Some(cvar) = cvar {
             // TODO: There are situations where we may know that we
             // can get away with notify_one().
             cvar.notify_all();
         }
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        while wakers.wake_all() {
-            let mut state = self.project_ref().state.lock();
-            wakers.extract_more(state.as_mut().base().project().rx_wakers);
-        }
 
-        // Lock again to block while full.
-        let state = self.project_ref().state.lock();
+        state = self.project_ref().state.lock();
 
         // Initialize the condvar while the lock is held. Thus, the
         // caller can, while the lock is held, check whether the
@@ -206,74 +218,111 @@ impl<T> Core<T> {
         not_full.wait_while(state, |s| !s.closed && !s.has_capacity())
     }
 
-    fn wake_all_tx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
+    fn wake_all_tx<'a>(self: Pin<&'a Self>, mut state: MutexGuard<'a, State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_full.get();
-        let mut wakers = state
+
+        let round = state
             .as_mut()
             .project()
             .base
             .project()
             .tx_wakers
-            .extract_some_wakers();
-        drop(state);
+            .begin_extraction();
+        let mut wakers = ExtractedWakers::new();
+        loop {
+            let more = state
+                .as_mut()
+                .project()
+                .base
+                .project()
+                .tx_wakers
+                .extract_some_wakers(round, &mut wakers);
+            drop(state);
+            wakers.wake_all();
+            if !more {
+                break;
+            }
+            state = self.project_ref().state.lock();
+        }
+
+        // TODO: Avoid unlocking and locking again when there's no
+        // waker or condition variable.
+
         if let Some(cvar) = cvar {
             // TODO: There are situations where we may know that we
             // can get away with notify_one().
             cvar.notify_all();
         }
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        while wakers.wake_all() {
-            let mut state = self.project_ref().state.lock();
-            wakers.extract_more(state.as_mut().project().base.project().tx_wakers);
-        }
     }
 
-    fn wake_one_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
+    fn wake_one_rx<'a>(self: Pin<&'a Self>, mut state: MutexGuard<'a, State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
-        let mut wakers = state
+        let round = state
             .as_mut()
             .project()
             .base
             .project()
             .rx_wakers
-            .extract_some_wakers();
-        drop(state);
+            .begin_extraction();
+        let mut wakers = ExtractedWakers::new();
+        // There is no guarantee that the highest-priority waker will
+        // actually call poll() again. Therefore, the best we can do
+        // is wake everyone.
+        loop {
+            let more = state
+                .as_mut()
+                .project()
+                .base
+                .project()
+                .rx_wakers
+                .extract_some_wakers(round, &mut wakers);
+            drop(state);
+            wakers.wake_all();
+            if !more {
+                break;
+            }
+            state = self.project_ref().state.lock();
+        }
+
         if let Some(cvar) = cvar {
             cvar.notify_one();
         }
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        while wakers.wake_all() {
-            let mut state = self.project_ref().state.lock();
-            wakers.extract_more(state.as_mut().project().base.project().rx_wakers);
-        }
     }
 
-    fn wake_all_rx(self: Pin<&Self>, mut state: MutexGuard<State<T>>) {
+    fn wake_all_rx<'a>(self: Pin<&'a Self>, mut state: MutexGuard<'a, State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
-        let mut wakers = state
+        let round = state
             .as_mut()
             .project()
             .base
             .project()
             .rx_wakers
-            .extract_some_wakers();
-        drop(state);
-        if let Some(cvar) = cvar {
-            cvar.notify_all();
-        }
+            .begin_extraction();
+        let mut wakers = ExtractedWakers::new();
         // There is no guarantee that the highest-priority waker will
         // actually call poll() again. Therefore, the best we can do
         // is wake everyone.
-        while wakers.wake_all() {
-            let mut state = self.project_ref().state.lock();
-            wakers.extract_more(state.as_mut().project().base.project().rx_wakers);
+        loop {
+            let more = state
+                .as_mut()
+                .project()
+                .base
+                .project()
+                .rx_wakers
+                .extract_some_wakers(round, &mut wakers);
+            drop(state);
+            wakers.wake_all();
+            if !more {
+                break;
+            }
+            state = self.project_ref().state.lock();
+        }
+
+        if let Some(cvar) = cvar {
+            cvar.notify_all();
         }
     }
 }

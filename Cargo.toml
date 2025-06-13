@@ -25,7 +25,7 @@ fast = ["parking_lot"]
 pin-project = "1.1"
 pinned-mutex = "0.3.2"
 splitrc = "0.1.11"
-wakerset = "0.1"
+wakerset = "0.2"
 
 [dev-dependencies]
 anyhow = "1.0.14"
