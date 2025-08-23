@@ -5,7 +5,12 @@ fn batch_channel(bencher: Bencher) {
     let item_count = 1000000usize;
     bencher
         .counter(divan::counter::ItemsCount::new(item_count))
-        .with_inputs(|| batch_channel::bounded_sync(item_count))
+        .with_inputs(|| {
+            batch_channel::Builder::new()
+                .bounded(item_count)
+                .preallocate()
+                .build_sync()
+        })
         .bench_local_values(|(tx, rx)| {
             for i in 0..item_count {
                 tx.send(i).unwrap();

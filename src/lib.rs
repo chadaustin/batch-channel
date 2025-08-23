@@ -1073,22 +1073,7 @@ impl<T> SyncReceiver<T> {
 /// Rust async is polling, so unbuffered channels are not supported.
 /// Therefore, a capacity of 0 is rounded up to 1.
 pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
-    let capacity = capacity.max(1);
-    let core = Core {
-        state: Mutex::new(State {
-            base: StateBase {
-                capacity,
-                closed: false,
-                tx_wakers: WakerList::new(),
-                rx_wakers: WakerList::new(),
-            },
-            queue: VecDeque::new(),
-        }),
-        not_empty: OnceLock::new(),
-        not_full: OnceLock::new(),
-    };
-    let (core_tx, core_rx) = splitrc::pin(core);
-    (Sender { core: core_tx }, Receiver { core: core_rx })
+    Builder::new().bounded(capacity).build_async()
 }
 
 /// Allocates a bounded channel and returns the synchronous handles as
@@ -1105,21 +1090,7 @@ pub fn bounded_sync<T>(capacity: usize) -> (SyncSender<T>, SyncReceiver<T>) {
 /// Allocates an unbounded channel and returns the sender,
 /// receiver pair.
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
-    let core = Core {
-        state: Mutex::new(State {
-            base: StateBase {
-                capacity: UNBOUNDED_CAPACITY,
-                closed: false,
-                tx_wakers: WakerList::new(),
-                rx_wakers: WakerList::new(),
-            },
-            queue: VecDeque::new(),
-        }),
-        not_empty: OnceLock::new(),
-        not_full: OnceLock::new(),
-    };
-    let (core_tx, core_rx) = splitrc::pin(core);
-    (Sender { core: core_tx }, Receiver { core: core_rx })
+    Builder::new().build_async()
 }
 
 /// Allocates an unbounded channel and returns the synchronous handles
@@ -1127,4 +1098,81 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 pub fn unbounded_sync<T>() -> (SyncSender<T>, SyncReceiver<T>) {
     let (tx, rx) = unbounded();
     (tx.into_sync(), rx.into_sync())
+}
+
+/// Customized channel construction.
+#[derive(Debug, Default)]
+pub struct Builder {
+    capacity: Option<usize>,
+    preallocate: bool,
+}
+
+impl Builder {
+    /// Defaults to unbounded.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Define this channel as bounded with the given capacity.
+    ///
+    /// Because handles can be converted freely between sync and
+    /// async, and Rust async is polling, unbuffered channels are not
+    /// supported. A capacity of 0 is rounded up to 1.
+    pub fn bounded(&mut self, capacity: usize) -> &mut Self {
+        self.capacity = Some(capacity);
+        self
+    }
+
+    /// Preallocate bounded channels with their full capacity. This
+    /// avoids reallocation at runtime.
+    ///
+    /// Has no effect on unbounded channels.
+    pub fn preallocate(&mut self) -> &mut Self {
+        self.preallocate = true;
+        self
+    }
+
+    /// Allocates a channel and returns async sender and receiver
+    /// handles.
+    pub fn build_async<T>(&mut self) -> (Sender<T>, Receiver<T>) {
+        let capacity;
+        let queue;
+        match self.capacity {
+            Some(c) => {
+                capacity = c;
+                queue = if self.preallocate {
+                    VecDeque::with_capacity(capacity)
+                } else {
+                    VecDeque::new()
+                };
+            }
+            None => {
+                capacity = UNBOUNDED_CAPACITY;
+                queue = VecDeque::new();
+            }
+        };
+
+        let core = Core {
+            state: Mutex::new(State {
+                base: StateBase {
+                    capacity,
+                    closed: false,
+                    tx_wakers: WakerList::new(),
+                    rx_wakers: WakerList::new(),
+                },
+                queue,
+            }),
+            not_empty: OnceLock::new(),
+            not_full: OnceLock::new(),
+        };
+        let (core_tx, core_rx) = splitrc::pin(core);
+        (Sender { core: core_tx }, Receiver { core: core_rx })
+    }
+
+    /// Allocates a channel and returns the synchronous sender and
+    /// receiver handles.
+    pub fn build_sync<T>(&mut self) -> (SyncSender<T>, SyncReceiver<T>) {
+        let (tx, rx) = self.build_async();
+        (tx.into_sync(), rx.into_sync())
+    }
 }
