@@ -24,6 +24,26 @@ fn batch_channel(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn batch_channel_send_only(bencher: Bencher) {
+    let item_count = 1000000usize;
+    bencher
+        .counter(divan::counter::ItemsCount::new(item_count))
+        .with_inputs(|| {
+            batch_channel::Builder::new()
+                .bounded(item_count)
+                .preallocate()
+                .build_sync()
+        })
+        .bench_local_values(|(tx, rx)| {
+            for i in 0..item_count {
+                tx.send(i).unwrap();
+            }
+            drop(tx);
+            drop(rx);
+        });
+}
+
+#[divan::bench]
 fn kanal(bencher: Bencher) {
     let item_count = 1000000usize;
     bencher
@@ -42,6 +62,21 @@ fn kanal(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn kanal_send_only(bencher: Bencher) {
+    let item_count = 1000000usize;
+    bencher
+        .counter(divan::counter::ItemsCount::new(item_count))
+        .with_inputs(|| kanal::bounded(item_count))
+        .bench_local_values(|(tx, rx)| {
+            for i in 0..item_count {
+                tx.send(i).unwrap();
+            }
+            drop(tx);
+            drop(rx);
+        });
+}
+
+#[divan::bench]
 fn crossbeam(bencher: Bencher) {
     let item_count = 1000000usize;
     bencher
@@ -56,6 +91,21 @@ fn crossbeam(bencher: Bencher) {
                 assert_eq!(Ok(i), rx.recv());
             }
             assert!(rx.recv().is_err());
+        });
+}
+
+#[divan::bench]
+fn crossbeam_send_only(bencher: Bencher) {
+    let item_count = 1000000usize;
+    bencher
+        .counter(divan::counter::ItemsCount::new(item_count))
+        .with_inputs(|| crossbeam::channel::bounded(item_count))
+        .bench_local_values(|(tx, rx)| {
+            for i in 0..item_count {
+                tx.send(i).unwrap();
+            }
+            drop(tx);
+            drop(rx);
         });
 }
 
