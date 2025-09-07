@@ -259,31 +259,35 @@ impl<T> Core<T> {
     fn wake_one_rx<'a>(self: Pin<&'a Self>, mut state: MutexGuard<'a, State<T>>) {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_empty.get();
-        let round = state
-            .as_mut()
-            .project()
-            .base
-            .project()
-            .rx_wakers
-            .begin_extraction();
-        let mut wakers = ExtractedWakers::new();
-        // There is no guarantee that the highest-priority waker will
-        // actually call poll() again. Therefore, the best we can do
-        // is wake everyone.
-        loop {
-            let more = state
+        if state.as_mut().project().base.project().rx_wakers.is_empty() {
+            drop(state);
+        } else {
+            let round = state
                 .as_mut()
                 .project()
                 .base
                 .project()
                 .rx_wakers
-                .extract_some_wakers(round, &mut wakers);
-            drop(state);
-            wakers.wake_all();
-            if !more {
-                break;
+                .begin_extraction();
+            let mut wakers = ExtractedWakers::new();
+            // There is no guarantee that the highest-priority waker will
+            // actually call poll() again. Therefore, the best we can do
+            // is wake everyone.
+            loop {
+                let more = state
+                    .as_mut()
+                    .project()
+                    .base
+                    .project()
+                    .rx_wakers
+                    .extract_some_wakers(round, &mut wakers);
+                drop(state);
+                wakers.wake_all();
+                if !more {
+                    break;
+                }
+                state = self.project_ref().state.lock();
             }
-            state = self.project_ref().state.lock();
         }
 
         if let Some(cvar) = cvar {

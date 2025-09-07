@@ -1174,9 +1174,9 @@ checksum = "943ce29a8a743eb10d6082545d861b24f9d1b160b7d741e0f2cdf726bec909c5"
 
 [[package]]
 name = "wakerset"
-version = "0.2.3"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92eab859fda9e47749f79adbb661a7cf4f1195beaa3fdbc0a26c2b14efda6288"
+checksum = "f434542e8bd0e49c3510ed64ac744e81e542d709a2385aa785fdb317ed284a48"
 dependencies = [
  "arrayvec",
 ]
