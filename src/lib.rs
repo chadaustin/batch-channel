@@ -222,32 +222,33 @@ impl<T> Core<T> {
         // The lock is held. Therefore, we know whether a Condvar must be notified or not.
         let cvar = self.not_full.get();
 
-        let round = state
-            .as_mut()
-            .project()
-            .base
-            .project()
-            .tx_wakers
-            .begin_extraction();
-        let mut wakers = ExtractedWakers::new();
-        loop {
-            let more = state
+        if state.as_mut().project().base.project().tx_wakers.is_empty() {
+            drop(state);
+        } else {
+            let round = state
                 .as_mut()
                 .project()
                 .base
                 .project()
                 .tx_wakers
-                .extract_some_wakers(round, &mut wakers);
-            drop(state);
-            wakers.wake_all();
-            if !more {
-                break;
+                .begin_extraction();
+            let mut wakers = ExtractedWakers::new();
+            loop {
+                let more = state
+                    .as_mut()
+                    .project()
+                    .base
+                    .project()
+                    .tx_wakers
+                    .extract_some_wakers(round, &mut wakers);
+                drop(state);
+                wakers.wake_all();
+                if !more {
+                    break;
+                }
+                state = self.project_ref().state.lock();
             }
-            state = self.project_ref().state.lock();
         }
-
-        // TODO: Avoid unlocking and locking again when there's no
-        // waker or condition variable.
 
         if let Some(cvar) = cvar {
             // TODO: There are situations where we may know that we
