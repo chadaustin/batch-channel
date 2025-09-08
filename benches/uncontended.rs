@@ -44,6 +44,30 @@ fn batch_channel_send_only(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn batch_channel_recv_only(bencher: Bencher) {
+    let item_count = 1000000usize;
+    bencher
+        .counter(divan::counter::ItemsCount::new(item_count))
+        .with_inputs(|| {
+            let (tx, rx) = batch_channel::Builder::new()
+                .bounded(item_count)
+                .preallocate()
+                .build_sync();
+            for i in 0..item_count {
+                tx.send(i).unwrap();
+            }
+            drop(tx);
+            rx
+        })
+        .bench_local_values(|rx| {
+            for i in 0..item_count {
+                assert_eq!(Some(i), rx.recv());
+            }
+            assert_eq!(None, rx.recv());
+        });
+}
+
+#[divan::bench]
 fn kanal(bencher: Bencher) {
     let item_count = 1000000usize;
     bencher
