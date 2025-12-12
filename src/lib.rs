@@ -1070,6 +1070,14 @@ impl<T> SyncReceiver<T> {
     }
 }
 
+impl<T> Iterator for SyncReceiver<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.recv()
+    }
+}
+
 // Constructors
 
 /// Allocates a bounded channel and returns the sender, receiver
