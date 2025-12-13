@@ -9,8 +9,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 trait Channel {
-    const HAS_BATCH: bool;
-
     type Sender<T: Send + 'static>: ChannelSender<T> + 'static;
     type Receiver<T: Send + 'static>: ChannelReceiver<T> + 'static;
 
@@ -18,8 +16,6 @@ trait Channel {
 }
 
 trait ChannelSync {
-    const HAS_BATCH: bool;
-
     type SyncSender<T: Send + 'static>: ChannelSyncSender<T> + 'static;
     type SyncReceiver<T: Send + 'static>: ChannelSyncReceiver<T> + 'static;
 
@@ -73,8 +69,6 @@ trait ChannelSyncReceiver<T>: Clone + Send {
 struct BatchChannel;
 
 impl Channel for BatchChannel {
-    const HAS_BATCH: bool = true;
-
     type Sender<T: Send + 'static> = batch_channel::Sender<T>;
     type Receiver<T: Send + 'static> = batch_channel::Receiver<T>;
 
@@ -84,8 +78,6 @@ impl Channel for BatchChannel {
 }
 
 impl ChannelSync for BatchChannel {
-    const HAS_BATCH: bool = true;
-
     type SyncSender<T: Send + 'static> = batch_channel::SyncSender<T>;
     type SyncReceiver<T: Send + 'static> = batch_channel::SyncReceiver<T>;
 
@@ -178,8 +170,6 @@ impl<T: Send> ChannelSyncReceiver<T> for batch_channel::SyncReceiver<T> {
 struct KanalChannel;
 
 impl Channel for KanalChannel {
-    const HAS_BATCH: bool = false;
-
     type Sender<T: Send + 'static> = kanal::AsyncSender<T>;
     type Receiver<T: Send + 'static> = kanal::AsyncReceiver<T>;
 
@@ -234,8 +224,6 @@ impl<T: Send> ChannelReceiver<T> for kanal::AsyncReceiver<T> {
 }
 
 impl ChannelSync for KanalChannel {
-    const HAS_BATCH: bool = false;
-
     type SyncSender<T: Send + 'static> = kanal::Sender<T>;
     type SyncReceiver<T: Send + 'static> = kanal::Receiver<T>;
 
@@ -293,8 +281,6 @@ impl<T: Send> ChannelSyncReceiver<T> for kanal::Receiver<T> {
 struct CrossbeamChannel;
 
 impl ChannelSync for CrossbeamChannel {
-    const HAS_BATCH: bool = false;
-
     type SyncSender<T: Send + 'static> = crossbeam::channel::Sender<T>;
     type SyncReceiver<T: Send + 'static> = crossbeam::channel::Receiver<T>;
 
@@ -353,8 +339,6 @@ impl<T: Send> ChannelSyncReceiver<T> for crossbeam::channel::Receiver<T> {
 struct AsyncChannel;
 
 impl Channel for AsyncChannel {
-    const HAS_BATCH: bool = false;
-
     type Sender<T: Send + 'static> = async_channel::Sender<T>;
     type Receiver<T: Send + 'static> = async_channel::Receiver<T>;
 
