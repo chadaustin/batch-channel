@@ -1006,7 +1006,8 @@ impl<T> Receiver<T> {
     }
 }
 
-///
+/// A [futures::core::Stream] implementation that returns elements
+/// from the stream, one by one, until it's closed.
 #[cfg(feature = "futures-core")]
 #[must_use = "streams do nothing unless you `.await` or poll them"]
 #[pin_project]
