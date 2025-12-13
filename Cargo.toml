@@ -10,6 +10,10 @@ repository = "https://github.com/chadaustin/batch-channel"
 keywords = ["async", "channel"]
 categories = ["asynchronous"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true

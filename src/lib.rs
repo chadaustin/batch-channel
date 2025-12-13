@@ -987,7 +987,8 @@ impl<T> Receiver<T> {
     // TODO: try_recv_vec
 
     /// Return a [futures_core::Stream] implementation that repeatedly
-    /// calls `recv`. It returns None when the channel is closed.
+    /// calls [Receiver::recv]. It yields None when the channel is
+    /// closed.
     ///
     /// `Stream` must be pinned before use:
     ///
@@ -1006,8 +1007,10 @@ impl<T> Receiver<T> {
     }
 }
 
-/// A [futures::core::Stream] implementation that returns elements
+/// A [futures_core::Stream] implementation that returns elements
 /// from the stream, one by one, until it's closed.
+///
+/// Returned by [Receiver::stream].
 #[cfg(feature = "futures-core")]
 #[must_use = "streams do nothing unless you `.await` or poll them"]
 #[pin_project]
