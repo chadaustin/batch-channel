@@ -13,7 +13,6 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest # ARM
-          - macos-13 # Intel
 
     runs-on: ${{ matrix.image }}
     steps:
