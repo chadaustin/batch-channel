@@ -2,10 +2,8 @@
 set -e
 cd "${BASH_SOURCE%/*}"/..
 
-cargo check --all-targets
-cargo check --all-targets -F parking_lot
-cargo test
-cargo test -F parking_lot
+cargo hack --optional-deps --feature-powerset check --all-targets
+cargo hack --optional-deps --feature-powerset test
 #cargo bench
 cargo doc
 
