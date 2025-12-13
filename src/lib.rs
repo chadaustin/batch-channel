@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("example.md")]
 
@@ -998,6 +1000,7 @@ impl<T> Receiver<T> {
     /// let elt2 = rx.next().await;
     /// ```
     #[cfg(feature = "futures-core")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "futures-core")))]
     pub fn stream<'a>(&'a self) -> Stream<'a, T> {
         let recv = Recv {
             receiver: self,
@@ -1012,6 +1015,7 @@ impl<T> Receiver<T> {
 ///
 /// Returned by [Receiver::stream].
 #[cfg(feature = "futures-core")]
+#[cfg_attr(docsrs, doc(cfg(feature = "futures-core")))]
 #[must_use = "streams do nothing unless you `.await` or poll them"]
 #[pin_project]
 pub struct Stream<'a, T> {
