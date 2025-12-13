@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 pub use futures::executor::block_on;
 pub use futures::executor::LocalPool;
 pub use futures::task::LocalSpawnExt;

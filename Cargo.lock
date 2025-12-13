@@ -209,6 +209,7 @@ dependencies = [
  "crossbeam",
  "divan",
  "futures",
+ "futures-core",
  "itertools",
  "kanal",
  "lazy_static",

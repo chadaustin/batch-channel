@@ -985,6 +985,43 @@ impl<T> Receiver<T> {
     }
 
     // TODO: try_recv_vec
+
+    /// Return a [futures_core::Stream] implementation that repeatedly
+    /// calls `recv`. It returns None when the channel is closed.
+    ///
+    /// `Stream` must be pinned before use:
+    ///
+    /// ```rust,ignore
+    /// let mut rx = pin!(rx.stream());
+    /// let elt1 = rx.next().await;
+    /// let elt2 = rx.next().await;
+    /// ```
+    #[cfg(feature = "futures-core")]
+    pub fn stream<'a>(&'a self) -> Stream<'a, T> {
+        let recv = Recv {
+            receiver: self,
+            waker: WakerSlot::new(),
+        };
+        Stream { recv }
+    }
+}
+
+///
+#[cfg(feature = "futures-core")]
+#[must_use = "streams do nothing unless you `.await` or poll them"]
+#[pin_project]
+pub struct Stream<'a, T> {
+    #[pin]
+    recv: Recv<'a, T>,
+}
+
+#[cfg(feature = "futures-core")]
+impl<'a, T> futures_core::Stream for Stream<'a, T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().recv.poll(cx)
+    }
 }
 
 // SyncReceiver
